@@ -30,6 +30,9 @@
 // Source.Python
 #include "modules/players/players_movements.h"
 
+// SDK
+#include "game/shared/in_buttons.h"
+
 
 //-----------------------------------------------------------------------------
 // CGameMovementWrapper class.
@@ -38,10 +41,9 @@ template<typename HookFunc, typename HookHandler>
 CGameMovementListenerManager::CGameMovementListenerManager(HookFunc tFunc, HookHandler tHandler, HookType_t eType):
 	m_pFunc(NULL), m_pHook(NULL)
 {
-	CFunctionInfo *pInfo = GetFunctionInfo(tFunc);
+	std::unique_ptr<CFunctionInfo> pInfo(GetFunctionInfo(tFunc));
 	if (pInfo) {
 		m_pFunc = CPointer((unsigned long)GetGameMovement()).MakeVirtualFunction(*pInfo);
-		delete pInfo;
 	}
 
 	m_pHandler = (HookHandlerFn *)tHandler;
@@ -82,7 +84,7 @@ void CGameMovementListenerManager::Initialize()
 
 void CGameMovementListenerManager::Finalize()
 {
-	if (!m_pHook) {
+	if (m_pHook) {
 		m_pHook->RemoveCallback(m_eType, m_pHandler);
 	}
 }
@@ -121,34 +123,50 @@ DEFINE_MOVEMENT_LISTENER(OnPlayerLand, CheckFalling, PRE)
 	NOTIFY_MOVEMENT_LISTENER(OnPlayerLand);
 }
 
-DEFINE_MOVEMENT_LISTENER(OnPlayerDuck, Duck, POST)
+DEFINE_MOVEMENT_LISTENER(OnPlayerDuck, Duck, PRE)
 {
 	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
-	if (pPlayer->GetIsDucked() || !pPlayer->GetIsDucking() || pPlayer->GetDuckTime() != GAMEMOVEMENT_DUCK_TIME) {
+	if (!pPlayer || !(GetGameMovement()->mv->m_nButtons & IN_DUCK) || (pPlayer->GetLastButtons() & IN_DUCK)) {
 		return false;
 	}
 
 	NOTIFY_MOVEMENT_LISTENER(OnPlayerDuck);
 }
 
-DEFINE_GENERIC_MOVEMENT_LISTENER(OnPlayerDucked, FinishDuck, PRE);
-
-DEFINE_MOVEMENT_LISTENER(OnPlayerUnduck, Duck, POST)
+DEFINE_MOVEMENT_LISTENER(OnPlayerDucked, FinishDuck, POST)
 {
 	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
-	if (!pPlayer->GetIsDucked() || !pPlayer->GetIsDucking() || pPlayer->GetDuckTime() != GAMEMOVEMENT_DUCK_TIME) {
+	if (!pPlayer || !pPlayer->GetIsDucked()) {
+		return false;
+	}
+
+	NOTIFY_MOVEMENT_LISTENER(OnPlayerDucked);
+}
+
+DEFINE_MOVEMENT_LISTENER(OnPlayerUnduck, Duck, PRE)
+{
+	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
+	if (!pPlayer || (GetGameMovement()->mv->m_nButtons & IN_DUCK) || !(pPlayer->GetLastButtons() & IN_DUCK)) {
 		return false;
 	}
 
 	NOTIFY_MOVEMENT_LISTENER(OnPlayerUnduck);
 }
 
-DEFINE_GENERIC_MOVEMENT_LISTENER(OnPlayerUnducked, FinishUnDuck, PRE);
+DEFINE_MOVEMENT_LISTENER(OnPlayerUnducked, FinishUnDuck, POST)
+{
+	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
+	if (!pPlayer || pPlayer->GetIsDucked()) {
+		return false;
+	}
+
+	NOTIFY_MOVEMENT_LISTENER(OnPlayerUnducked);
+}
 
 DEFINE_MOVEMENT_LISTENER(OnPlayerWaterJump, CheckWaterJump, POST)
 {
 	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
-	if (!(pPlayer->GetFlags() & FL_WATERJUMP)) {
+	if (!pPlayer || !(pPlayer->GetFlags() & FL_WATERJUMP)) {
 		return false;
 	}
 
@@ -209,6 +227,11 @@ DEFINE_MOVEMENT_LISTENER(OnPlayerStartClimbingLadder, OnLadder, POST)
 
 	PlayerMixin *pPlayer = (PlayerMixin *)GetGameMovement()->player;
 	if (!pPlayer || pPlayer->GetMoveType() == MOVETYPE_LADDER) {
+		return false;
+	}
+
+	trace_t *pTrace = pHook->GetArgument<trace_t *>(1 /* pm */);
+	if (!pTrace || pTrace->fraction == 1.0f) {
 		return false;
 	}
 

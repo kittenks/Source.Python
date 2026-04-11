@@ -85,7 +85,6 @@ class CGameMovementWrapper;
 	DEFINE_MOVEMENT_LISTENER(name, hook, type) \
 	{ \
 		NOTIFY_MOVEMENT_LISTENER(name, __VA_ARGS__); \
-		return false; \
 	}
 
 #define NOTIFY_MOVEMENT_LISTENER(name, ...) \
