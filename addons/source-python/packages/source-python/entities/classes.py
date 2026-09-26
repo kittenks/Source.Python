@@ -18,6 +18,7 @@ from configobj import Section
 
 # Source.Python Imports
 #   Core
+from core import ARCHITECTURE
 from core import GameConfigObj
 from core import PLATFORM
 #   Entities
@@ -342,11 +343,17 @@ class _ServerClasses(TypeManager):
             # Resolve the offset of this attribute
             offset = Key.as_int(
                 self,
-                data.get('offset_' + PLATFORM, data.get('offset', 0))
+                data.get(
+                    'offset_' + PLATFORM + '_' + ARCHITECTURE,
+                    data.get('offset_' + PLATFORM, data.get('offset', 0))
+                )
             )
 
             # Resolve the base offset of this attribute
-            base = data.get('base_' + PLATFORM, data.get('base'))
+            base = data.get(
+                'base_' + PLATFORM + '_' + ARCHITECTURE,
+                data.get('base_' + PLATFORM, data.get('base'))
+            )
             try:
                 offset += instance.properties[base].offset
             except KeyError:
@@ -563,7 +570,12 @@ class _ServerClasses(TypeManager):
 
             # Handle virtual inputs on Linux
             if PLATFORM == 'linux' and func.address & 1:
-                func = pointer.get_virtual_func((func.address - 1) // 4)
+                # The engine encodes a vtable index in the low bits of the
+                # datamap input address. A vtable entry is one pointer wide,
+                # so the stride is 4 on x86 and 8 on x86-64.
+                func = pointer.get_virtual_func(
+                    (func.address - 1) // (8 if ARCHITECTURE == 'x86_64' else 4)
+                )
 
             # TODO:
             # Don't use make_function(), but use input_function directly. It's
