@@ -49,6 +49,23 @@ is_checkout() {
     return 0
 }
 
+# codeload.github.com serves HL2SDK as a ZIP. Windows ships bsdtar as tar.exe,
+# which reads ZIP, but the GNU tar on the Linux runners cannot, so prefer an
+# extractor that understands the archive that was actually downloaded. unzip
+# also exits 1 on recoverable warnings, so the caller validates the tree.
+extract_archive() {
+    local archive="$1" target="$2"
+    if command -v unzip >/dev/null 2>&1; then
+        unzip -q -o "$archive" -d "$target" 2>/dev/null || true
+        return 0
+    fi
+    if command -v bsdtar >/dev/null 2>&1; then
+        bsdtar -xf "$archive" -C "$target"
+    else
+        tar -xf "$archive" -C "$target"
+    fi
+}
+
 MARKER="$DESTINATION/.source-python-sdk-commit"
 if [[ -f "$MARKER" && "$(tr -d '\r\n' < "$MARKER")" == "$COMMIT" ]] && is_checkout; then
     echo "Using cached HL2SDK $BRANCH@$COMMIT at $DESTINATION"
@@ -104,7 +121,7 @@ for URL in "${URLS[@]}"; do
     fi
     rm -rf -- "$EXTRACT"
     mkdir -p -- "$EXTRACT"
-    if ! tar -xf "$ARCHIVE" -C "$EXTRACT"; then
+    if ! extract_archive "$ARCHIVE" "$EXTRACT"; then
         echo "The archive could not be extracted; trying the next source." >&2
         continue
     fi
