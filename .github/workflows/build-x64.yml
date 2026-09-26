@@ -142,9 +142,12 @@ jobs:
             ubuntu:20.04 \
             bash -euc '
               apt-get update -qq
+              # python3 is not optional: build-linux.sh parses sdk-pins.json with
+              # it. file and unzip stay on the host, where the verification and
+              # listing steps that use them already run.
               apt-get install -y -qq --no-install-recommends \
-                build-essential cmake make binutils file unzip ca-certificates
-              echo "  $(gcc -dumpversion) $(ldd --version | head -1)"
+                build-essential cmake make binutils python3 ca-certificates
+              echo "  gcc $(gcc -dumpversion), $(ldd --version | head -1)"
               bash ./scripts/ci/build-linux.sh \
                 "$SP_BRANCH" \
                 /work \
