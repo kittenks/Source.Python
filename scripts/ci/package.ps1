@@ -66,6 +66,21 @@ $gameBranches = if ($SourceOnly) { @() } else { $Branches }
 # members that exist, instead of asking it for names that may be absent.
 $payloadDirectories = @('addons', 'cfg', 'logs', 'resource', 'sound')
 
+# Native artifacts are laid out as <game>/<target>, where <target> is a
+# platform plus an optional architecture suffix. Both workflows publish into
+# the same artifacts tree and the suffix is what keeps them apart: the 32-bit
+# builds use windows / linux and the x86-64 builds use windows-x86_64 /
+# linux-x86_64, and build-packages.yml already merges every native-* artifact
+# into one directory. Keying the manifest by target rather than by platform is
+# what stops one architecture from silently overwriting the other. Map a target
+# to its file extension so a new architecture only needs a row here.
+$targetExtensions = [ordered]@{
+    'windows'        = 'dll'
+    'linux'          = 'so'
+    'windows-x86_64' = 'dll'
+    'linux-x86_64'   = 'so'
+}
+
 foreach ($branch in $gameBranches) {
     $property = $pins.PSObject.Properties[$branch]
     if ($null -eq $property) { throw "No SDK pin exists for '$branch'." }
@@ -90,42 +105,84 @@ foreach ($branch in $gameBranches) {
     foreach ($loaderName in @('source-python.dll', 'source-python.so')) {
         Remove-Item -LiteralPath (Join-Path $stage "addons\$loaderName") -Force -ErrorAction SilentlyContinue
     }
-    $platforms = [ordered]@{}
+    # The 32-bit platforms stay mandatory. An x86-64 sibling is packaged when
+    # the run produced one, so a game that has no 64-bit build yet still gets a
+    # complete archive instead of failing. Which architectures actually landed
+    # in the archive is recorded in the manifest, so nothing here is implicit.
+    $targets = [ordered]@{}
     foreach ($platform in $RequiredPlatforms) {
-        $nativeDirectory = Join-Path $NativeRoot "$branch\$platform"
+        $targets[$platform] = $platform
+        $candidate = "$platform-x86_64"
+        if (Test-Path -LiteralPath (Join-Path $NativeRoot "$branch\$candidate") -PathType Container) {
+            $targets[$candidate] = $candidate
+        }
+    }
+
+    # Two targets of the same platform differ only in architecture, and both
+    # produce artifacts called core.so / source-python.so. A naive copy
+    # therefore lets the x86-64 build silently overwrite the x86 one while the
+    # manifest still advertises both, and the archive ships 32-bit-hostile
+    # binaries that claim to support both. Refuse to assemble that instead.
+    $shipped = [ordered]@{}
+    $sdkPins = [ordered]@{}
+    foreach ($target in $targets.Values) {
+        $nativeDirectory = Join-Path $NativeRoot "$branch\$target"
         if (-not (Test-Path -LiteralPath $nativeDirectory -PathType Container)) {
-            throw "Missing native artifacts for $branch/$platform at '$nativeDirectory'."
+            throw "Missing native artifacts for $branch/$target at '$nativeDirectory'."
+        }
+        if (-not $targetExtensions.Contains($target)) {
+            throw "Unsupported package target '$target'."
         }
 
-        if ($platform -eq 'windows') {
-            $core = Join-Path $nativeDirectory 'core.dll'
-            $loader = Join-Path $nativeDirectory 'source-python.dll'
-        }
-        elseif ($platform -eq 'linux') {
-            $core = Join-Path $nativeDirectory 'core.so'
-            $loader = Join-Path $nativeDirectory 'source-python.so'
-        }
-        else {
-            throw "Unsupported package platform '$platform'."
-        }
+        $extension = $targetExtensions[$target]
+        $core = Join-Path $nativeDirectory "core.$extension"
+        $loader = Join-Path $nativeDirectory "source-python.$extension"
         if (-not (Test-Path -LiteralPath $core -PathType Leaf) -or
             -not (Test-Path -LiteralPath $loader -PathType Leaf)) {
-            throw "Native artifact set is incomplete for $branch/$platform."
+            throw "Native artifact set is incomplete for $branch/$target."
         }
 
-        Copy-Item -LiteralPath $core -Destination $binDirectory -Force
-        Copy-Item -LiteralPath $loader -Destination (Join-Path $stage 'addons') -Force
-        $platforms[$platform] = [ordered]@{
+        foreach ($artifact in @(
+                @{ source = $core; directory = $binDirectory },
+                @{ source = $loader; directory = (Join-Path $stage 'addons') })) {
+            $name = [IO.Path]::GetFileName($artifact.source)
+            $destination = Join-Path $artifact.directory $name
+            if ($shipped.Contains($destination) -and $shipped[$destination] -ne $target) {
+                throw ("Target '$target' would overwrite the copy already staged for " +
+                    "'$($shipped[$destination])' at '$destination'. Two architectures of the " +
+                    "same platform cannot share one installed filename: the addon entry is " +
+                    "resolved once, so shipping both in a single archive needs names or " +
+                    "directories the engine itself can tell apart, and that convention is not " +
+                    "established yet. Package one architecture per archive until it is.")
+            }
+            $shipped[$destination] = $target
+            Copy-Item -LiteralPath $artifact.source -Destination $destination -Force
+        }
+
+        $sdkPins[$target] = [ordered]@{
             sdk_commit = [string]$property.Value.commit
             files = @([IO.Path]::GetFileName($core), [IO.Path]::GetFileName($loader))
         }
     }
 
+    # Keyed by target, because the two architectures really do have different
+    # runtime needs. The 32-bit libffi line is not a copy/paste slip: the
+    # bundled i386 _ctypes links libffi.so.7 by SONAME. The x86-64 build does
+    # not need it -- its _ctypes resolves against libc alone, because CPython's
+    # manylinux build links libffi statically. Measured on x86-64 run
+    # 36242813920 and asserted by the "Verify x86-64 runtime dependencies
+    # resolve" step, so it is not an assumption.
     $runtimeRequirements = [ordered]@{}
-    if ($RequiredPlatforms -contains 'linux') {
+    if ($sdkPins.Contains('linux')) {
         $runtimeRequirements['linux'] = @(
             '32-bit libffi.so.7 (required by the bundled CPython _ctypes module)',
             '32-bit zlib runtime (libz.so.1)'
+        )
+    }
+    if ($sdkPins.Contains('linux-x86_64')) {
+        $runtimeRequirements['linux-x86_64'] = @(
+            '64-bit zlib runtime (libz.so.1)',
+            'no libffi pin needed: the bundled x86-64 _ctypes links only libc'
         )
     }
     $manifest = [ordered]@{
@@ -134,7 +191,7 @@ foreach ($branch in $gameBranches) {
         source_revision = $sourceRevision
         source_pull_requests = @(533, 535, 537)
         issue_regression = 536
-        sdk_pins = $platforms
+        sdk_pins = $sdkPins
         runtime_requirements = $runtimeRequirements
         generated_at_utc = [DateTime]::UtcNow.ToString('o')
     }

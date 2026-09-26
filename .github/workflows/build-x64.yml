@@ -185,6 +185,16 @@ jobs:
       # the 64-bit _ctypes links only libc: CPython's manylinux build links
       # libffi statically. Asserted rather than reported, because an unresolved
       # dependency here is a real packaging failure, not an informational fact.
+      #
+      # There is deliberately no fallback to the 32-bit lib-dynload directory.
+      # Both directories hold modules named _ctypes.cpython-313-x86_64-linux-gnu.so
+      # -- that tag is the 32-bit libpython's own SOABI, verified by extracting
+      # the string from plat-linux/libpython3.13.so.1.0 -- so the filename alone
+      # cannot tell the architectures apart. Only the ELF header can. The two
+      # directories were checked directly: lib-dynload/_ctypes is ELF32 EM_386
+      # and lib-dynload-linux64/_ctypes is ELF64 EM_X86_64. Falling back would
+      # therefore ldd a 32-bit image here, and the missing-dependency check
+      # would pass while proving nothing about the 64-bit runtime.
       - name: Verify x86-64 runtime dependencies resolve
         if: runner.os == 'Linux'
         shell: bash
@@ -192,7 +202,8 @@ jobs:
           set -euo pipefail
           dynload="addons/source-python/Python3/lib-dynload-linux64"
           if [ ! -d "$dynload" ]; then
-            dynload="addons/source-python/Python3/lib-dynload"
+            echo "Missing the x86-64 extension module directory: $dynload" >&2
+            exit 1
           fi
           ctypes_module="$(find "$dynload" -maxdepth 1 -name '_ctypes*.so' -print -quit)"
           echo "dynload dir : $dynload"
@@ -202,6 +213,10 @@ jobs:
           fi
           echo "module      : $ctypes_module"
           file -b "$ctypes_module" | sed 's/^/  /'
+          if ! readelf -h "$ctypes_module" | grep -q 'Class:.*ELF64'; then
+            echo "$ctypes_module is not an ELF64 image; this is the wrong architecture." >&2
+            exit 1
+          fi
           LD_LIBRARY_PATH="$PWD/addons/source-python/Python3/plat-linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             ldd "$ctypes_module" | tee /tmp/source-python-x64-ctypes-ldd.txt
           if grep -qi 'not found' /tmp/source-python-x64-ctypes-ldd.txt; then
