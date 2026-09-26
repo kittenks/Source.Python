@@ -213,11 +213,19 @@ jobs:
       - name: List the packaged x86-64 Python runtime
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
+          # No pipe into head here. The runner invokes this script as
+          # `bash -e -o pipefail` regardless of the `set` line, so `ls | head`
+          # makes ls die on SIGPIPE once head has read enough, and -e turns
+          # that into a step failure. Whether it happens depends on how the
+          # listing splits across head's buffer, which is why it looks flaky:
+          # runs 36246268853 (css) and 36246273214 (dods) failed on this while
+          # 36246264297 (tf2) passed with identical content. Bound the listing
+          # with ls's own head option instead, which cannot signal a pipe.
           for dir in addons/source-python/Python3/plat-linux64 addons/source-python/Python3/lib-dynload-linux64; do
             echo "=== $dir ==="
             if [ -d "$dir" ]; then
-              ls -la "$dir" | head -30
+              ls -la --time-style=long-iso -lh "$dir"
             else
               echo "(missing)"
             fi
