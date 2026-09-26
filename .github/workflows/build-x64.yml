@@ -40,9 +40,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Linux only for now. src/CMakeLists.txt hard-fails x86_64 unless the
+        # platform is UNIX and the branch is hl2dm, and the third-party trees
+        # carry lib/linux64 for boost, dyncall, DynamicHooks and AsmJit but no
+        # win64 counterpart. Add the windows-2022 target back once win64
+        # dependencies and a win64 CPython are in place; the -Architecture
+        # plumbing in build-windows.ps1 is already in place for that.
         target:
-          - os: windows-2022
-            platform: windows
           - os: ubuntu-22.04
             platform: linux
     runs-on: ${{ matrix.target.os }}
