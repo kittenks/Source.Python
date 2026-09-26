@@ -1,0 +1,224 @@
+name: Build Source.Python x86-64 (experimental)
+
+# Experimental x86-64 pipeline. It is dispatch-only on purpose: it must never
+# start a run by itself, and it does not exist on the master branch, so the
+# 32-bit build-packages pipeline keeps its own matrix and release gating.
+# Merge into build-packages.yml only once a game's x86-64 runtime is verified
+# on a real server.
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Game branch to build for x86-64'
+        required: false
+        default: hl2dm
+        type: choice
+        options:
+          - hl2dm
+          - css
+          - dods
+          - tf2
+          - blade
+      github_proxy:
+        description: 'Optional public GitHub proxy, for example https://ghfast.top'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-python-x64-${{ github.ref }}-${{ inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  build-x64:
+    name: Build ${{ inputs.branch }} x86-64 (${{ matrix.target.platform }})
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - os: windows-2022
+            platform: windows
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.target.os }}
+    env:
+      SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
+      SP_BRANCH: ${{ inputs.branch }}
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+
+      - name: Record checked-out source revision
+        shell: pwsh
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          "SOURCEPYTHON_SOURCE_REVISION=$revision" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Report the resolved SDK pin
+        shell: pwsh
+        run: |
+          $pins = Get-Content -LiteralPath ./scripts/ci/sdk-pins.json -Raw | ConvertFrom-Json
+          $entry = $pins.PSObject.Properties[$env:SP_BRANCH].Value
+          "branch        : $env:SP_BRANCH"
+          "sdk commit    : $($entry.commit)"
+          "sdk_lib       : $($entry.sdk_lib)"
+          "sdk_lib_linux : $($entry.sdk_lib_linux)"
+          "sdk_lib_win64  : $($entry.sdk_lib_win64)"
+          "sdk_lib_linux64: $($entry.sdk_lib_linux64)"
+
+      - name: Verify Source.Python fixes
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File ./scripts/ci/verify-fixes.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
+
+      - name: Verify shell script line endings
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if grep -Il $'\r' src/Build.sh scripts/ci/*.sh; then
+            echo 'Shell scripts must use LF line endings.' >&2
+            exit 1
+          fi
+
+      # No gcc-multilib and no i386 architecture: this job links 64-bit objects
+      # only. The 32-bit runtime dependency check in build-packages.yml greps
+      # for libffi.so.7, which is the i386 SONAME and does not apply here.
+      - name: Install Linux x86-64 build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake make binutils file unzip
+
+      - name: Fetch pinned HL2SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $mirror = $env:SP_GITHUB_PROXY
+          .\scripts\ci\fetch-hl2sdk.ps1 -Branch $env:SP_BRANCH -MirrorBase $mirror
+
+      - name: Fetch pinned HL2SDK (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash ./scripts/ci/fetch-hl2sdk.sh "$SP_BRANCH"
+
+      - name: Build Windows x86-64
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\ci\build-windows.ps1 -Branch $env:SP_BRANCH -Architecture x86_64
+
+      - name: Build Linux x86-64
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          bash ./scripts/ci/build-linux.sh "$SP_BRANCH" \
+            "$GITHUB_WORKSPACE" \
+            "$GITHUB_WORKSPACE/src/Builds/Linux/$SP_BRANCH-x86_64" \
+            "$GITHUB_WORKSPACE/artifacts/native" \
+            x86_64
+
+      # build-linux.sh already hard-fails on a non-ELF64 image; these re-check
+      # the exact pair of files that get uploaded and record their hashes.
+      - name: Verify Windows binaries are x86-64 PE images
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\native\$env:SP_BRANCH\windows-x86_64"
+          foreach ($name in @('core.dll', 'source-python.dll')) {
+            $path = Join-Path $directory $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "$name was not produced at '$path'."
+            }
+            $stream = [IO.File]::OpenRead($path)
+            try {
+              $reader = New-Object IO.BinaryReader($stream)
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset + 4
+              $machine = $reader.ReadUInt16()
+            }
+            finally {
+              $stream.Dispose()
+            }
+            if ($machine -ne 0x8664) {
+              throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine
+            }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$name x86-64 PE machine=0x{0:x} sha256=$hash" -f $machine
+          }
+          Write-Host '--- build-info.json ---'
+          Get-Content -LiteralPath (Join-Path $directory 'build-info.json')
+
+      - name: Verify Linux binaries are 64-bit ELF images
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="artifacts/native/$SP_BRANCH/linux-x86_64"
+          for name in core.so source-python.so; do
+            test -f "$directory/$name"
+            description="$(file -b "$directory/$name")"
+            case "$description" in
+              *"ELF 64-bit"*) ;;
+              *) echo "$name is not a 64-bit ELF image: $description" >&2; exit 1 ;;
+            esac
+            echo "$name: $description"
+            readelf -h "$directory/$name" | grep -E 'Class:|Machine:'
+            sha256sum "$directory/$name"
+          done
+          echo '--- build-info.json ---'
+          cat "$directory/build-info.json"
+
+      # Reported, not asserted. The 32-bit pipeline pins libffi.so.7, which is
+      # the i386 SONAME; a 64-bit CPython normally wants libffi.so.8. This run
+      # records the real dependency so the assertion can be written from
+      # evidence rather than from a guess.
+      - name: Inspect x86-64 runtime dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -uo pipefail
+          dynload="addons/source-python/Python3/lib-dynload-linux64"
+          if [ ! -d "$dynload" ]; then
+            dynload="addons/source-python/Python3/lib-dynload"
+          fi
+          ctypes_module="$(find "$dynload" -maxdepth 1 -name '_ctypes*.so' -print -quit)"
+          echo "dynload dir : $dynload"
+          if [ -z "$ctypes_module" ]; then
+            echo "No _ctypes module found in $dynload; nothing to inspect." >&2
+            exit 0
+          fi
+          echo "module      : $ctypes_module"
+          file -b "$ctypes_module" | sed 's/^/  /'
+          LD_LIBRARY_PATH="$PWD/addons/source-python/Python3/plat-linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ldd "$ctypes_module" | tee /tmp/source-python-x64-ctypes-ldd.txt
+          echo "--- missing ---"
+          grep -i 'not found' /tmp/source-python-x64-ctypes-ldd.txt || echo "(none)"
+
+      - name: List the packaged x86-64 Python runtime
+        shell: bash
+        run: |
+          set -uo pipefail
+          for dir in addons/source-python/Python3/plat-linux64 addons/source-python/Python3/lib-dynload-linux64; do
+            echo "=== $dir ==="
+            if [ -d "$dir" ]; then
+              ls -la "$dir" | head -30
+            else
+              echo "(missing)"
+            fi
+          done
+
+      - name: Upload x86-64 native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-x64-${{ inputs.branch }}-${{ matrix.target.platform }}
+          path: artifacts/native
+          if-no-files-found: error
+          retention-days: 30

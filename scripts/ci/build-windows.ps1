@@ -7,7 +7,10 @@ param(
     [string]$RepositoryRoot = '',
     [string]$BuildDirectory = '',
     [string]$OutputDirectory = '',
-    [string]$Generator = ''
+    [string]$Generator = '',
+
+    [ValidateSet('x86', 'x86_64')]
+    [string]$Architecture = 'x86'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,14 +20,18 @@ if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
 }
 $RepositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 & (Join-Path $PSScriptRoot 'verify-fixes.ps1') -RepositoryRoot $RepositoryRoot
+# Mirror the Linux layout: the x86 build keeps its historical path, and the
+# x86-64 build gets its own so the two architectures can coexist in artifacts.
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
-    $BuildDirectory = Join-Path $RepositoryRoot "src\Builds\Windows\$Branch"
+    $buildFolder = if ($Architecture -eq 'x86') { $Branch } else { "$Branch-$Architecture" }
+    $BuildDirectory = Join-Path $RepositoryRoot "src\Builds\Windows\$buildFolder"
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $RepositoryRoot 'artifacts\native'
 }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
-$nativeDirectory = Join-Path $OutputDirectory "$Branch\windows"
+$platformFolder = if ($Architecture -eq 'x86') { 'windows' } else { "windows-$Architecture" }
+$nativeDirectory = Join-Path $OutputDirectory "$Branch\$platformFolder"
 $buildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
 
 $pinsPath = Join-Path $PSScriptRoot 'sdk-pins.json'
@@ -33,6 +40,16 @@ $commit = [string]$pins.PSObject.Properties[$Branch].Value.commit
 $sdkDirectory = Join-Path $RepositoryRoot "src\hl2sdk\$Branch"
 if (-not (Test-Path -LiteralPath (Join-Path $sdkDirectory 'tier1\KeyValues.cpp') -PathType Leaf)) {
     throw "HL2SDK is not ready at '$sdkDirectory'. Run scripts/ci/fetch-hl2sdk.ps1 first."
+}
+if ($Architecture -eq 'x86_64') {
+    $win64Library = [string]$pins.PSObject.Properties[$Branch].Value.sdk_lib_win64
+    if ([string]::IsNullOrWhiteSpace($win64Library)) {
+        throw "sdk-pins.json has no sdk_lib_win64 entry for '$Branch'."
+    }
+    $win64Path = Join-Path $sdkDirectory $win64Library.Replace('/', [IO.Path]::DirectorySeparatorChar)
+    if (-not (Test-Path -LiteralPath $win64Path -PathType Leaf)) {
+        throw "The pinned HL2SDK checkout has no Windows x86-64 tier1 library at '$win64Library'."
+    }
 }
 
 function Find-CMake {
@@ -62,18 +79,25 @@ function Select-Generator {
     return 'Visual Studio 17 2022'
 }
 
-function Assert-X86Pe {
-    param([string]$Path)
+function Assert-PeMachine {
+    param(
+        [string]$Path,
+        [int]$Expected,
+        [string]$ExpectedName
+    )
     $bytes = [IO.File]::ReadAllBytes($Path)
     if ($bytes.Length -lt 64 -or [BitConverter]::ToInt32($bytes, 0x3c) -lt 0) {
         throw "'$Path' is not a valid PE file."
     }
     $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
     $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-    if ($machine -ne 0x014c) {
-        throw "'$Path' is not an x86 PE (machine 0x$($machine.ToString('X4')))."
+    if ($machine -ne $Expected) {
+        throw "'$Path' is not a $ExpectedName PE (machine 0x$($machine.ToString('X4')), expected 0x$($Expected.ToString('X4')))."
     }
 }
+
+$peMachine = if ($Architecture -eq 'x86') { 0x014c } else { 0x8664 }
+$peName = if ($Architecture -eq 'x86') { 'x86' } else { 'x86-64' }
 
 $cmake = Find-CMake
 $Generator = Select-Generator -CMake $cmake
@@ -82,8 +106,10 @@ New-Item -ItemType Directory -Force -Path $nativeDirectory | Out-Null
 
 Write-Host "Using CMake: $cmake"
 Write-Host "Using generator: $Generator"
-& $cmake -S (Join-Path $RepositoryRoot 'src') -B $buildDirectory -G $Generator -A Win32 `
-    "-DBRANCH=$Branch" "-DSOURCEPYTHON_ARCH=x86"
+$vsPlatform = if ($Architecture -eq 'x86') { 'Win32' } else { 'x64' }
+Write-Host "Using platform: $vsPlatform ($Architecture)"
+& $cmake -S (Join-Path $RepositoryRoot 'src') -B $buildDirectory -G $Generator -A $vsPlatform `
+    "-DBRANCH=$Branch" "-DSOURCEPYTHON_ARCH=$Architecture"
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE." }
 
 & $cmake --build $buildDirectory --config Release --parallel 2
@@ -94,8 +120,8 @@ $loader = Get-ChildItem -LiteralPath $buildDirectory -Recurse -Filter 'source-py
 if ($null -eq $core -or $null -eq $loader) {
     throw 'The build completed but core.dll or source-python.dll was not produced.'
 }
-Assert-X86Pe $core.FullName
-Assert-X86Pe $loader.FullName
+Assert-PeMachine $core.FullName $peMachine $peName
+Assert-PeMachine $loader.FullName $peMachine $peName
 
 Remove-Item -LiteralPath $nativeDirectory -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $nativeDirectory | Out-Null
@@ -108,7 +134,8 @@ if ([string]::IsNullOrWhiteSpace($sourceRevision)) { $sourceRevision = 'local-ar
 $metadata = [ordered]@{
     game = $Branch
     platform = 'windows'
-    architecture = 'x86'
+    architecture = $Architecture
+    vs_platform = $vsPlatform
     sdk_commit = $commit
     source_revision = $sourceRevision
     cmake_generator = $Generator

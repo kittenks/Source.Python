@@ -40,7 +40,7 @@ $required = @(
 # The OrangeBox games keep platform libraries in per-architecture folders, while
 # the episodic-style branches use a flat lib/public (or lib/linux) layout. The pin
 # records the exact files so a wrong mirror response is rejected up front.
-foreach ($key in @('sdk_lib', 'sdk_lib_linux', 'sdk_lib_linux64')) {
+foreach ($key in @('sdk_lib', 'sdk_lib_linux', 'sdk_lib_linux64', 'sdk_lib_win64')) {
     $value = [string]$property.Value.PSObject.Properties[$key].Value
     if (-not [string]::IsNullOrWhiteSpace($value)) {
         $required += $value.Replace('/', [IO.Path]::DirectorySeparatorChar)

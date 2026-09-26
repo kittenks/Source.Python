@@ -40,7 +40,8 @@
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
     "sdk_lib_linux64": "lib/public/linux64/tier1.a",
-    "reason": "KeyValues update for the 2026-09 game update; also carries the x86-64 tier1 library used by PR #533"
+    "sdk_lib_win64": "lib/public/x64/tier1.lib",
+    "reason": "KeyValues update for the 2026-09 game update; also carries the x86-64 tier1 libraries used by PR #533"
   },
   "l4d2": {
     "branch": "l4d2",
