@@ -60,16 +60,25 @@ New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
 $assembleSourceArchive = $SourceArchive -or $SourceOnly
 $gameBranches = if ($SourceOnly) { @() } else { $Branches }
 
+# The game payload. .gitignore keeps cfg, logs and sound out of the repository
+# because the game writes into them at runtime, so a fresh CI checkout does not
+# have them at all. Recreate those folders in staging and hand tar exactly the
+# members that exist, instead of asking it for names that may be absent.
+$payloadDirectories = @('addons', 'cfg', 'logs', 'resource', 'sound')
+
 foreach ($branch in $gameBranches) {
     $property = $pins.PSObject.Properties[$branch]
     if ($null -eq $property) { throw "No SDK pin exists for '$branch'." }
     $stage = Join-Path $stagingRoot $branch
     New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-    foreach ($directory in @('addons', 'cfg', 'logs', 'resource', 'sound')) {
+    foreach ($directory in $payloadDirectories) {
         $source = Join-Path $RepositoryRoot $directory
         if (Test-Path -LiteralPath $source) {
             Copy-Item -LiteralPath $source -Destination $stage -Recurse -Force
+        }
+        else {
+            New-Item -ItemType Directory -Force -Path (Join-Path $stage $directory) | Out-Null
         }
     }
 
@@ -133,7 +142,8 @@ foreach ($branch in $gameBranches) {
 
     $archive = Join-Path $OutputDirectory "source-python-$branch-$dateStamp.zip"
     Remove-Item -LiteralPath $archive -Force -ErrorAction SilentlyContinue
-    & tar.exe -a -c -f $archive -C $stage addons cfg logs resource sound BUILD-MANIFEST.json
+    $members = @($payloadDirectories) + 'BUILD-MANIFEST.json'
+    & tar.exe -a -c -f $archive -C $stage @members
     if ($LASTEXITCODE -ne 0) { throw "Failed to create '$archive'." }
     $generatedArchives.Add($archive)
     Write-Host "Created $archive"
