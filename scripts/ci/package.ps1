@@ -123,6 +123,16 @@ foreach ($branch in $gameBranches) {
     # therefore lets the x86-64 build silently overwrite the x86 one while the
     # manifest still advertises both, and the archive ships 32-bit-hostile
     # binaries that claim to support both. Refuse to assemble that instead.
+    #
+    # This is a property of the loader, not an open question about the engine.
+    # src/loader/definitions.h selects the runtime subdirectories per
+    # architecture (PYLIB_NAME_LINUX64, ZLIB_LIB) but defines CORE_NAME only
+    # once per platform, so "bin/core.so" is the single core path both
+    # architectures expect. Each loader binary therefore has exactly one set of
+    # compiled-in expectations, and one archive can carry exactly one of them.
+    # Shipping both would need a new arch-selected CORE_NAME as well as an
+    # engine convention for finding an arch-specific addons/source-python
+    # module, so keep one architecture per archive until both exist.
     $shipped = [ordered]@{}
     $sdkPins = [ordered]@{}
     foreach ($target in $targets.Values) {
@@ -149,11 +159,11 @@ foreach ($branch in $gameBranches) {
             $destination = Join-Path $artifact.directory $name
             if ($shipped.Contains($destination) -and $shipped[$destination] -ne $target) {
                 throw ("Target '$target' would overwrite the copy already staged for " +
-                    "'$($shipped[$destination])' at '$destination'. Two architectures of the " +
-                    "same platform cannot share one installed filename: the addon entry is " +
-                    "resolved once, so shipping both in a single archive needs names or " +
-                    "directories the engine itself can tell apart, and that convention is not " +
-                    "established yet. Package one architecture per archive until it is.")
+                    "'$($shipped[$destination])' at '$destination'. One loader binary expects " +
+                    "exactly one core path, because src/loader/definitions.h picks the runtime " +
+                    "subdirectories per architecture but defines CORE_NAME only per platform, so " +
+                    "both architectures load the same 'bin/core.so'. A single archive can carry " +
+                    "one of them, not both. Package one architecture per archive.")
             }
             $shipped[$destination] = $target
             Copy-Item -LiteralPath $artifact.source -Destination $destination -Force
