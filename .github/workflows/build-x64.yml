@@ -253,3 +253,72 @@ jobs:
           path: artifacts/native
           if-no-files-found: error
           retention-days: 30
+
+  package-x64:
+    name: Package and verify the ${{ inputs.branch }} x86-64 archive
+    needs: build-x64
+    # windows-2022 because package.ps1 and verify-packages.ps1 use tar.exe, which
+    # only exists on the Windows runner. The x86-64 binaries themselves are built
+    # on ubuntu; this job only packs and checks them.
+    runs-on: windows-2022
+    env:
+      # Job-scoped, so it has to be restated here: the build job's SP_BRANCH does
+      # not carry across a job boundary.
+      SP_BRANCH: ${{ inputs.branch }}
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+
+      - name: Pin the build date
+        shell: pwsh
+        run: |
+          # Both scripts default to the current date independently, so a run that
+          # crosses midnight between packaging and verification would look for an
+          # archive name that was never written. Pin it once and share it.
+          $date = [DateTime]::Now.ToString('yyyy-MMdd')
+          "SOURCEPYTHON_BUILD_DATE=$date" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "build date: $date"
+
+      - name: Download the x86-64 native binaries
+        uses: actions/download-artifact@v4
+        with:
+          # Name the artifact outright rather than using pattern: native-*. The
+          # build job names it with matrix.target.platform, which is plain
+          # "linux" even though the binaries inside are x86-64, so the token here
+          # has to match that and not the linux-x86_64 directory name.
+          name: native-x64-${{ inputs.branch }}-linux
+          path: artifacts/native
+
+      - name: Assemble the x86-64 archive
+        shell: pwsh
+        run: |
+          .\scripts\ci\package.ps1 `
+            -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -NativeRoot (Join-Path $env:GITHUB_WORKSPACE 'artifacts\native') `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
+            -Branches $env:SP_BRANCH `
+            -RequiredPlatforms @('linux-x86_64')
+
+      - name: Verify the assembled archive
+        shell: pwsh
+        run: |
+          # This is where the new architecture assertion runs: it reads the ELF
+          # class out of the packaged core.so and fails if it is not ELF64, so an
+          # x86-32 artifact cannot ship inside an archive labelled x86-64.
+          .\scripts\ci\verify-packages.ps1 `
+            -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
+            -Branches $env:SP_BRANCH `
+            -RequiredPlatforms @('linux-x86_64') `
+            -SkipSourceArchive
+
+      - name: Upload the x86-64 archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-python-x64-${{ inputs.branch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
