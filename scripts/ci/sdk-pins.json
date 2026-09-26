@@ -25,14 +25,16 @@
     "commit": "47f0ea659bc70718f9c41a7830b6ad943a68ba09",
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
-    "reason": "KeyValues update for the 2026-09 game update; required by Source.Python issue #536"
+    "sdk_lib_linux64": "lib/public/linux64/tier1.a",
+    "reason": "KeyValues update for the 2026-09 game update; required by Source.Python issue #536; carries the Linux x86-64 tier1 library"
   },
   "dods": {
     "branch": "dods",
     "commit": "cbc97391097ed5c2790ab3fac6f9d05661d3a10f",
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
-    "reason": "KeyValues update for the 2026-09 game update"
+    "sdk_lib_linux64": "lib/public/linux64/tier1.a",
+    "reason": "KeyValues update for the 2026-09 game update; carries the Linux x86-64 tier1 library"
   },
   "hl2dm": {
     "branch": "hl2dm",
@@ -55,6 +57,7 @@
     "commit": "0f358777e7a7f0ad4c6ed6595de1e4e81c15fa4e",
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
-    "reason": "Tweak KeyValues (2026-09-20), the OrangeBox SDK refresh that also landed on CSS/DODS/HL2DM"
+    "sdk_lib_linux64": "lib/public/linux64/tier1.a",
+    "reason": "Tweak KeyValues (2026-09-20), the OrangeBox SDK refresh that also landed on CSS/DODS/HL2DM; carries the Linux x86-64 tier1 library"
   }
 }

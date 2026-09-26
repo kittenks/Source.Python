@@ -16,10 +16,9 @@ on:
         type: choice
         options:
           - hl2dm
+          - tf2
           - css
           - dods
-          - tf2
-          - blade
       github_proxy:
         description: 'Optional public GitHub proxy, for example https://ghfast.top'
         required: false
@@ -41,9 +40,10 @@ jobs:
       fail-fast: false
       matrix:
         # Linux only for now. src/CMakeLists.txt hard-fails x86_64 unless the
-        # platform is UNIX and the branch is hl2dm, and the third-party trees
-        # carry lib/linux64 for boost, dyncall, DynamicHooks and AsmJit but no
-        # win64 counterpart. Add the windows-2022 target back once win64
+        # platform is UNIX and the branch is one of the games whose pinned
+        # HL2SDK revision carries lib/**/linux64/tier1.a, and the third-party
+        # trees carry lib/linux64 for boost, dyncall, DynamicHooks and AsmJit
+        # but no win64 counterpart. Add the windows-2022 target back once win64
         # dependencies and a win64 CPython are in place; the -Architecture
         # plumbing in build-windows.ps1 is already in place for that.
         target:
@@ -180,15 +180,16 @@ jobs:
           echo '--- build-info.json ---'
           cat "$directory/build-info.json"
 
-      # Reported, not asserted. The 32-bit pipeline pins libffi.so.7, which is
-      # the i386 SONAME; a 64-bit CPython normally wants libffi.so.8. This run
-      # records the real dependency so the assertion can be written from
-      # evidence rather than from a guess.
-      - name: Inspect x86-64 runtime dependencies
+      # The 32-bit pipeline pins libffi.so.7, which is the i386 SONAME and does
+      # not apply here. Measured on the first green x86-64 run (36242813920),
+      # the 64-bit _ctypes links only libc: CPython's manylinux build links
+      # libffi statically. Asserted rather than reported, because an unresolved
+      # dependency here is a real packaging failure, not an informational fact.
+      - name: Verify x86-64 runtime dependencies resolve
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           dynload="addons/source-python/Python3/lib-dynload-linux64"
           if [ ! -d "$dynload" ]; then
             dynload="addons/source-python/Python3/lib-dynload"
@@ -196,15 +197,18 @@ jobs:
           ctypes_module="$(find "$dynload" -maxdepth 1 -name '_ctypes*.so' -print -quit)"
           echo "dynload dir : $dynload"
           if [ -z "$ctypes_module" ]; then
-            echo "No _ctypes module found in $dynload; nothing to inspect." >&2
-            exit 0
+            echo "No _ctypes module found in $dynload; the runtime is incomplete." >&2
+            exit 1
           fi
           echo "module      : $ctypes_module"
           file -b "$ctypes_module" | sed 's/^/  /'
           LD_LIBRARY_PATH="$PWD/addons/source-python/Python3/plat-linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             ldd "$ctypes_module" | tee /tmp/source-python-x64-ctypes-ldd.txt
-          echo "--- missing ---"
-          grep -i 'not found' /tmp/source-python-x64-ctypes-ldd.txt || echo "(none)"
+          if grep -qi 'not found' /tmp/source-python-x64-ctypes-ldd.txt; then
+            echo 'x86-64 _ctypes has unresolved shared library dependencies.' >&2
+            exit 1
+          fi
+          echo 'All x86-64 _ctypes dependencies resolved.'
 
       - name: List the packaged x86-64 Python runtime
         shell: bash

@@ -10,8 +10,14 @@ If(NOT SOURCEPYTHON_ARCH MATCHES "^(x86|x86_64)$")
     Message(FATAL_ERROR "SOURCEPYTHON_ARCH must be x86 or x86_64")
 EndIf()
 If(SOURCEPYTHON_ARCH STREQUAL "x86_64")
-    If(NOT UNIX OR NOT BRANCH STREQUAL "hl2dm")
-        Message(FATAL_ERROR "x86_64 is currently supported only for Linux HL2DM")
+    # Games whose pinned HL2SDK revision carries a 64-bit Linux tier1 library.
+    # Only add a game here after confirming the library exists at its pin; the
+    # CI pin check in scripts/ci/fetch-hl2sdk.sh will fail loudly otherwise.
+    Set(SOURCEPYTHON_X86_64_LINUX_BRANCHES hl2dm tf2 css dods)
+    List(FIND SOURCEPYTHON_X86_64_LINUX_BRANCHES "${BRANCH}" SOURCEPYTHON_X86_64_BRANCH_INDEX)
+    If(NOT UNIX OR SOURCEPYTHON_X86_64_BRANCH_INDEX EQUAL -1)
+        Message(FATAL_ERROR
+            "x86_64 is currently supported only for Linux: ${SOURCEPYTHON_X86_64_LINUX_BRANCHES}")
     EndIf()
     Add_Definitions(-DSOURCEPYTHON_X86_64)
 EndIf()

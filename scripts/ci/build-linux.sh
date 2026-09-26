@@ -26,29 +26,45 @@ case "$ARCH" in
     x86|x86_64) ;;
     *) echo "Unsupported architecture: $ARCH" >&2; exit 2 ;;
 esac
-if [[ "$ARCH" == "x86_64" && "$BRANCH" != "hl2dm" ]]; then
-    echo 'Linux x86-64 is currently limited to HL2DM.' >&2
+# Games whose pinned HL2SDK revision carries a 64-bit Linux tier1 library.
+# Keep this list in sync with SOURCEPYTHON_X86_64_LINUX_BRANCHES in
+# src/CMakeLists.txt; the CMake guard is the authoritative check.
+X86_64_BRANCHES="hl2dm tf2 css dods"
+if [[ "$ARCH" == "x86_64" && " $X86_64_BRANCHES " != *" $BRANCH "* ]]; then
+    echo "Linux x86-64 is currently limited to: $X86_64_BRANCHES" >&2
     exit 2
 fi
 
 PINS_FILE="$SCRIPT_DIR/sdk-pins.json"
-COMMIT="$(python3 - "$PINS_FILE" "$BRANCH" <<'PY'
+mapfile -t PIN_FIELDS < <(python3 - "$PINS_FILE" "$BRANCH" <<'PY'
 import json
 import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     pins = json.load(stream)
-print(pins[sys.argv[2]]["commit"])
+entry = pins[sys.argv[2]]
+print(entry["commit"])
+# The 64-bit library path is not consistent across HL2SDK branches, so it is
+# read from the pin instead of being templated here.
+print(entry.get("sdk_lib_linux64", ""))
 PY
-)"
+)
+COMMIT="${PIN_FIELDS[0]}"
+LINUX64_LIB="${PIN_FIELDS[1]:-}"
 
 SDK_DIR="${SOURCEPYTHON_SDK:-$REPO_ROOT/src/hl2sdk/$BRANCH}"
 [[ -f "$SDK_DIR/tier1/KeyValues.cpp" ]] || {
     echo "HL2SDK is not ready at '$SDK_DIR'. Run scripts/ci/fetch-hl2sdk.sh first." >&2
     exit 1
 }
-if [[ "$ARCH" == "x86_64" && ! -f "$SDK_DIR/lib/public/linux64/tier1.a" ]]; then
-    echo "The pinned HL2SDK checkout has no Linux x86-64 tier1 library." >&2
-    exit 1
+if [[ "$ARCH" == "x86_64" ]]; then
+    if [[ -z "$LINUX64_LIB" ]]; then
+        echo "No sdk_lib_linux64 pin recorded for $BRANCH." >&2
+        exit 1
+    fi
+    if [[ ! -f "$SDK_DIR/$LINUX64_LIB" ]]; then
+        echo "The pinned HL2SDK checkout has no Linux x86-64 tier1 library at '$LINUX64_LIB'." >&2
+        exit 1
+    fi
 fi
 
 mkdir -p -- "$BUILD_DIR" "$NATIVE_DIR"
