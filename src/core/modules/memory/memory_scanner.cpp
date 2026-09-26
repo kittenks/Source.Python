@@ -502,6 +502,29 @@ CBinaryFile* CBinaryManager::FindBinary(char* szPath, bool bSrvCheck /* = true *
 		// This will allow passing e.g. "server" to this function.
 		szBinaryPath = std::string(szGameDir) + "/bin/" + szBinaryPath;
 		ulModule = (unsigned long) dlLoadLibrary(szBinaryPath.data());
+
+#ifdef SOURCEPYTHON_X86_64
+		// A 64-bit Source install keeps its engine modules in a
+		// per-architecture subdirectory: a TF2 x86-64 dedicated server has
+		// tf/bin/linux64/server_srv.so and no tf/bin/server_srv.so at all.
+		// Try that layout before giving up.
+		//
+		// The bare-name attempt above cannot be relied on to find it either.
+		// srcds_run_64 puts the 32-bit bin/ ahead of bin/linux64/ on
+		// LD_LIBRARY_PATH, so dlopen reaches the 32-bit copy first, fails to
+		// load it into a 64-bit process, and returns NULL without searching
+		// any further -- and the 32-bit copy is only there because the TF2
+		// depot ships both architectures into one tree.
+		if (!ulModule)
+		{
+			std::string szName(szBinaryPath);
+			std::string::size_type nSlash = szName.rfind('/');
+			szName = (nSlash == std::string::npos) ? szName : szName.substr(nSlash + 1);
+
+			szBinaryPath = std::string(szGameDir) + "/bin/linux64/" + szName;
+			ulModule = (unsigned long) dlLoadLibrary(szBinaryPath.data());
+		}
+#endif
 	}
 #endif
 
