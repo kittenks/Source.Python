@@ -32,7 +32,7 @@ Once you have installed the requirements, follow these steps to build Source.Pyt
     resources.
 
 You can shorten these steps by simply passing the game's name to the script
-e.g. ``./Build.sh css``.
+e.g. ``bash ./Build.sh css``.
 
 If the build finished successfully, it will say something like this:
 ``[100%] Built target core``.

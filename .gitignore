@@ -23,6 +23,9 @@ tests/
 src/Builds/
 src/hl2sdk/*
 !src/hl2sdk/readme.md
+artifacts/
+dist/
+*.download
 
 # Plugin directories
 __pycache__

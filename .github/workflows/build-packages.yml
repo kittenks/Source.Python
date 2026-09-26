@@ -1,0 +1,248 @@
+name: Build Source.Python packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Optional tag to create or update a GitHub release'
+        required: false
+        type: string
+      create_release:
+        description: 'Create/update a release after all matrix builds succeed'
+        required: false
+        default: false
+        type: boolean
+      github_proxy:
+        description: 'Optional public GitHub proxy, for example https://ghfast.top'
+        required: false
+        default: ''
+        type: string
+      build_date:
+        description: 'Date stamp for the archive names, yyyy-MMdd. Empty uses the run date.'
+        required: false
+        default: ''
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: source-python-packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.branch }} (${{ matrix.target.platform }})
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [blade, bms, csgo, css, dods, hl2dm, l4d2, tf2]
+        target:
+          - os: windows-2022
+            platform: windows
+          - os: ubuntu-22.04
+            platform: linux
+    runs-on: ${{ matrix.target.os }}
+    env:
+      SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Record checked-out source revision
+        shell: pwsh
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          "SOURCEPYTHON_SOURCE_REVISION=$revision" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Verify Source.Python fixes
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File ./scripts/ci/verify-fixes.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
+
+      - name: Verify shell script line endings
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if grep -Il $'\r' src/Build.sh scripts/ci/*.sh; then
+            echo 'Shell scripts must use LF line endings.' >&2
+            exit 1
+          fi
+
+      - name: Install Linux x86 build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          if ! dpkg --print-foreign-architectures | grep -qx i386; then
+            sudo dpkg --add-architecture i386
+          fi
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib cmake make binutils file unzip libffi7:i386 zlib1g:i386
+
+      - name: Fetch pinned HL2SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $mirror = $env:SP_GITHUB_PROXY
+          .\scripts\ci\fetch-hl2sdk.ps1 -Branch '${{ matrix.branch }}' -MirrorBase $mirror
+
+      - name: Fetch pinned HL2SDK (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash ./scripts/ci/fetch-hl2sdk.sh '${{ matrix.branch }}'
+
+      - name: Build Windows x86
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\scripts\ci\build-windows.ps1 -Branch '${{ matrix.branch }}'
+
+      - name: Build Linux x86
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash ./scripts/ci/build-linux.sh '${{ matrix.branch }}'
+
+      - name: Verify Linux runtime dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ctypes_module="$(find addons/source-python/Python3/lib-dynload -maxdepth 1 -name '_ctypes*.so' -print -quit)"
+          test -n "$ctypes_module"
+          LD_LIBRARY_PATH="$PWD/addons/source-python/Python3/plat-linux${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+            ldd "$ctypes_module" | tee /tmp/source-python-ctypes-ldd.txt
+          grep -q 'libffi.so.7 =>' /tmp/source-python-ctypes-ldd.txt
+
+      - name: Verify native artifact names
+        shell: bash
+        run: |
+          directory="artifacts/native/${{ matrix.branch }}/${{ matrix.target.platform }}"
+          suffix="so"
+          if [ "${{ matrix.target.platform }}" = "windows" ]; then suffix="dll"; fi
+          test -f "$directory/core.$suffix"
+          test -f "$directory/source-python.$suffix"
+
+      - name: Verify Windows binaries are x86 PE images
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\native\${{ matrix.branch }}\windows"
+          foreach ($name in @('core.dll', 'source-python.dll')) {
+            $path = Join-Path $directory $name
+            $stream = [IO.File]::OpenRead($path)
+            try {
+              $reader = New-Object IO.BinaryReader($stream)
+              $stream.Position = 0x3C
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset + 4
+              $machine = $reader.ReadUInt16()
+            }
+            finally {
+              $stream.Dispose()
+            }
+            if ($machine -ne 0x014C) {
+              throw "$name is not an x86 PE image (machine 0x{0:x})." -f $machine
+            }
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            Write-Host "$name x86 sha256=$hash"
+          }
+
+      - name: Verify Linux binaries are 32-bit ELF images
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="artifacts/native/${{ matrix.branch }}/linux"
+          for name in core.so source-python.so; do
+            test -f "$directory/$name"
+            description="$(file -b "$directory/$name")"
+            case "$description" in
+              *"ELF 32-bit"*) ;;
+              *) echo "$name is not a 32-bit ELF image: $description" >&2; exit 1 ;;
+            esac
+            echo "$name: $description"
+            sha256sum "$directory/$name"
+          done
+
+      - name: Upload native binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.branch }}-${{ matrix.target.platform }}
+          path: artifacts/native
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Assemble release archives
+    needs: build
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    env:
+      SOURCEPYTHON_BUILD_DATE: ${{ inputs.build_date }}
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
+
+      - name: Record checked-out source revision
+        shell: pwsh
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          "SOURCEPYTHON_SOURCE_REVISION=$revision" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Download all native binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts/native
+          merge-multiple: true
+
+      - name: Assemble BLADE/BMS/CS:GO/CSS/DODS/HL2DM/L4D2/TF2 archives
+        shell: pwsh
+        run: |
+          .\scripts\ci\package.ps1 `
+            -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -NativeRoot (Join-Path $env:GITHUB_WORKSPACE 'artifacts\native') `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
+            -Branches @('blade', 'bms', 'csgo', 'css', 'dods', 'hl2dm', 'l4d2', 'tf2') `
+            -RequiredPlatforms @('windows', 'linux') `
+            -SourceArchive
+
+      - name: Verify assembled archives
+        shell: pwsh
+        run: |
+          .\scripts\ci\verify-packages.ps1 `
+            -RepositoryRoot $env:GITHUB_WORKSPACE `
+            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist')
+
+      - name: Upload assembled archives
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-python-packages
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update GitHub release
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.create_release && inputs.release_tag != '') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --title "Source.Python $RELEASE_TAG" \
+              --notes "Automated Windows/Linux x86 packages. See BUILD-MANIFEST.json in each archive for pinned HL2SDK revisions and Linux runtime requirements."
+          fi

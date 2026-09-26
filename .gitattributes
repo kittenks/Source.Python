@@ -2,3 +2,12 @@
 # Adding * text=auto causes Git to autodetect text files and normalise their
 # line endings to LF when they are checked into your repository.
 * text=auto
+
+# Build helpers are executed by Bash on Linux runners. Keep shebangs and
+# set -e lines valid even when the repository is checked out on Windows.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Windows one-click build helpers are executed by cmd.exe.
+*.bat text eol=crlf
+*.cmd text eol=crlf
