@@ -60,12 +60,23 @@ If(SOURCE_ENGINE MATCHES "bms")
         ${SOURCESDK_LIB}/public/linux32/libvstdlib_srv.so
     )
 ElseIf(SOURCE_ENGINE MATCHES "orangebox" AND SOURCEPYTHON_ARCH STREQUAL "x86_64")
+    # Link the dedicated-server tier0/vstdlib, exactly as the x86 branch below
+    # does. The un-suffixed libtier0.so/libvstdlib.so are the HL2 *client*
+    # builds: the dedicated server never loads them, so linking them puts a
+    # DT_NEEDED in the gamedll that no 64-bit install can satisfy. On a real
+    # x86-64 server that surfaces as
+    #   "failed to dlopen .../addons/source-python.so error=libtier0.so:
+    #    wrong ELF class: ELFCLASS32"
+    # because srcds_run_64 puts the 32-bit bin/ ahead of bin/linux64/ on
+    # LD_LIBRARY_PATH. Valve's own linux64 libraries are named *_srv.so and
+    # ld.so resolves those by SONAME from the already-loaded engine copy
+    # without ever searching a directory.
     Set(SOURCEPYTHON_LINK_LIBRARIES
         "${SOURCEPYTHON_LINK_LIBRARIES}"
         ${SOURCESDK_LIB}/public/linux64/mathlib.a
         ${SOURCESDK_LIB}/public/linux64/tier1.a
-        ${SOURCESDK_LIB}/public/linux64/libtier0.so
-        ${SOURCESDK_LIB}/public/linux64/libvstdlib.so
+        ${SOURCESDK_LIB}/public/linux64/libtier0_srv.so
+        ${SOURCESDK_LIB}/public/linux64/libvstdlib_srv.so
     )
 ElseIf(SOURCE_ENGINE MATCHES "orangebox")
     Set(SOURCEPYTHON_LINK_LIBRARIES
