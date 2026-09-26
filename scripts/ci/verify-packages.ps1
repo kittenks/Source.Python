@@ -6,7 +6,18 @@ param(
     [string[]]$RequiredPlatforms = @('windows', 'linux'),
     [string]$BuildDate = $env:SOURCEPYTHON_BUILD_DATE,
     # Partial runs verify only the game archives.
-    [switch]$SkipSourceArchive
+    [switch]$SkipSourceArchive,
+    # Highest glibc an x86-64 binary in the archive may require. Nothing else in
+    # this script can see this: a prebuilt can be committed from a newer distro
+    # than the package supports and every other check still passes, because the
+    # architecture is right, the entry is present and the hash matches. It only
+    # surfaces at dlopen time on a real host, as
+    #   "version `GLIBC_2.38' not found (required by ...)"
+    # Valve's own 64-bit engine libraries need GLIBC_2.29, so 2.31 -- Ubuntu
+    # 20.04 LTS -- costs nothing the engine could not already run on.
+    # Only 64-bit objects are checked: the 32-bit natives legitimately sit at
+    # 2.34, so a shared budget would turn the master pipeline red.
+    [version]$MaxGlibc64 = '2.31'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,19 +63,18 @@ function Get-ArchiveEntries {
 # differences. PE: the DOS header keeps the PE header offset at 0x3c and the
 # machine field is the first 2 bytes of that.
 function Get-NativeFormat {
-    param([string]$Path)
-    $bytes = [IO.File]::ReadAllBytes($Path)
-    if ($bytes.Length -ge 5 -and $bytes[0] -eq 0x7f -and $bytes[1] -eq 0x45 -and
-        $bytes[2] -eq 0x4c -and $bytes[3] -eq 0x46) {
-        if ($bytes[4] -eq 1) { return 'elf32' }
-        if ($bytes[4] -eq 2) { return 'elf64' }
-        return "elf-class-$($bytes[4])"
+    param([byte[]]$Bytes)
+    if ($Bytes.Length -ge 5 -and $Bytes[0] -eq 0x7f -and $Bytes[1] -eq 0x45 -and
+        $Bytes[2] -eq 0x4c -and $Bytes[3] -eq 0x46) {
+        if ($Bytes[4] -eq 1) { return 'elf32' }
+        if ($Bytes[4] -eq 2) { return 'elf64' }
+        return "elf-class-$($Bytes[4])"
     }
-    if ($bytes.Length -ge 0x40 -and $bytes[0] -eq 0x4d -and $bytes[1] -eq 0x5a) {
-        $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
-        if ($peOffset -gt 0 -and ($peOffset + 6) -le $bytes.Length -and
-            $bytes[$peOffset] -eq 0x50 -and $bytes[$peOffset + 1] -eq 0x45) {
-            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+    if ($Bytes.Length -ge 0x40 -and $Bytes[0] -eq 0x4d -and $Bytes[1] -eq 0x5a) {
+        $peOffset = [BitConverter]::ToInt32($Bytes, 0x3c)
+        if ($peOffset -gt 0 -and ($peOffset + 6) -le $Bytes.Length -and
+            $Bytes[$peOffset] -eq 0x50 -and $Bytes[$peOffset + 1] -eq 0x45) {
+            $machine = [BitConverter]::ToUInt16($Bytes, $peOffset + 4)
             if ($machine -eq 0x014c) { return 'pe32' }
             if ($machine -eq 0x8664) { return 'pe64' }
             return ('pe-machine-0x{0:x4}' -f $machine)
@@ -72,6 +82,48 @@ function Get-NativeFormat {
         return 'pe-without-signature'
     }
     return 'unrecognised'
+}
+
+# The highest glibc symbol version an ELF requires, read out of the file
+# itself. Version needs are stored in .gnu.version_r as plain NUL-terminated
+# "GLIBC_x.y" strings; reading them as text is enough because no other part of
+# an ELF produces that shape, and only the maximum matters. Returns $null when
+# the file pins no glibc version at all.
+#
+# The comparison is done on [version] objects, which compare numerically. A
+# string compare would rank '2.9' above '2.31' and quietly pass everything.
+function Get-GlibcFloor {
+    param([byte[]]$Bytes)
+    $highest = $null
+    $text = [Text.Encoding]::ASCII.GetString($Bytes)
+    foreach ($match in [regex]::Matches($text, 'GLIBC_(\d+)\.(\d+)')) {
+        $candidate = [version]::new([int]$match.Groups[1].Value, [int]$match.Groups[2].Value)
+        if ($null -eq $highest -or $candidate -gt $highest) { $highest = $candidate }
+    }
+    $highest
+}
+
+# Records the worst floor seen per archive and fails anything over budget. The
+# observed values are printed at the end either way, so a build that tightens
+# the floor is visible and a build that loosens it cannot pass quietly.
+$glibcObserved = @{}
+
+function Test-GlibcFloor {
+    param(
+        [string]$Archive,
+        [string]$Relative,
+        [byte[]]$Bytes
+    )
+    if ((Get-NativeFormat $Bytes) -ne 'elf64') { return }
+    $floor = Get-GlibcFloor $Bytes
+    $label = Split-Path -Leaf $Archive
+    if ($null -eq $floor) { return }
+    if (-not $glibcObserved.ContainsKey($label) -or $floor -gt $glibcObserved[$label]) {
+        $glibcObserved[$label] = $floor
+    }
+    if ($floor -gt $MaxGlibc64) {
+        $failures.Add("$label`: $Relative requires GLIBC_$floor but the x86-64 budget is GLIBC_$MaxGlibc64")
+    }
 }
 
 # The format each packaging target has to produce. Keyed by target name, so a
@@ -155,6 +207,13 @@ foreach ($archive in $expected) {
         }
         else {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+            # Whether this archive ships a loadable x86-64 runtime at all. Every
+            # Linux archive carries plat-linux64/ since PR #533, but in a 32-bit
+            # build that copy is never dlopen'd, so its glibc floor is irrelevant
+            # and must not be held against the master pipeline. The manifest is
+            # the only thing that says which architectures are actually live.
+            $targets = @($manifest.sdk_pins.PSObject.Properties.Name)
+            $hasX64 = $targets -contains 'linux-x86_64'
             foreach ($property in $manifest.sdk_pins.PSObject.Properties) {
                 $target = $property.Name
                 if (-not $expectedFormats.ContainsKey($target)) {
@@ -181,11 +240,45 @@ foreach ($archive in $expected) {
                         $failures.Add("$(Split-Path -Leaf $archive): could not extract $staged")
                         continue
                     }
-                    $actual = Get-NativeFormat $extracted
+                    $bytes = [IO.File]::ReadAllBytes($extracted)
+                    $actual = Get-NativeFormat $bytes
                     if ($actual -ne $wanted) {
                         $failures.Add("$(Split-Path -Leaf $archive): $staged is $actual but target '$target' requires $wanted")
                     }
+                    if ($target -eq 'linux-x86_64') {
+                        Test-GlibcFloor -Archive $archive -Relative $staged -Bytes $bytes
+                    }
                 }
+            }
+        }
+
+        if (-not $hasX64) { continue }
+
+        # The shipped CPython runtime is not named by the manifest, so it is
+        # swept separately. Only the 64-bit half is interesting: the 32-bit
+        # libpython predates the current toolchain and already sits at 2.30,
+        # which is exactly the comparison that shows the x86-64 one was built
+        # somewhere newer.
+        foreach ($runtimeRoot in @(
+                'addons/source-python/Python3/plat-linux64',
+                'addons/source-python/Python3/lib-dynload')) {
+            $members = @($entrySet | Where-Object { $_ -like "$runtimeRoot/*" -and $_ -notlike '*/' })
+            if ($members.Count -eq 0) { continue }
+            & tar.exe -xf $archive -C $probe @members 2>$null
+            $root = Join-Path $probe $runtimeRoot.Replace('/', [IO.Path]::DirectorySeparatorChar)
+            if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+            # $probe is built from $env:TEMP, which can be an 8.3 short path,
+            # while Get-ChildItem reports long paths -- so the offset of $probe
+            # in FullName is not a constant. Locate the runtime directory by
+            # name instead of counting characters off the front.
+            $marker = $runtimeRoot.Replace('/', [IO.Path]::DirectorySeparatorChar)
+            foreach ($file in Get-ChildItem -LiteralPath $root -File -Recurse) {
+                $fileBytes = [IO.File]::ReadAllBytes($file.FullName)
+                if ((Get-NativeFormat $fileBytes) -ne 'elf64') { continue }
+                $index = $file.FullName.LastIndexOf($marker)
+                if ($index -lt 0) { continue }
+                $tail = $file.FullName.Substring($index + $marker.Length).TrimStart('\', '/').Replace('\', '/')
+                Test-GlibcFloor -Archive $archive -Relative "$runtimeRoot/$tail" -Bytes $fileBytes
             }
         }
     }
@@ -219,8 +312,15 @@ else {
 }
 
 if ($failures.Count -gt 0) {
-    $failures | ForEach-Object { Write-Error $_ }
-    throw 'Package verification failed.'
+    # $ErrorActionPreference is Stop, so Write-Error here would raise on the
+    # first entry and hide the rest of a list that was collected precisely so
+    # that all of it could be reported in one run.
+    foreach ($failure in $failures) { [Console]::Error.WriteLine("error: $failure") }
+    throw "Package verification failed with $($failures.Count) problem(s)."
+}
+
+foreach ($label in ($glibcObserved.Keys | Sort-Object)) {
+    Write-Host "  $label`: worst 64-bit glibc floor GLIBC_$($glibcObserved[$label]) (budget GLIBC_$MaxGlibc64)"
 }
 
 $sourceCount = if ($SkipSourceArchive) { 0 } else { 1 }
