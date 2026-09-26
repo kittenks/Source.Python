@@ -122,11 +122,50 @@ jobs:
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          bash ./scripts/ci/build-linux.sh "$SP_BRANCH" \
-            "$GITHUB_WORKSPACE" \
-            "$GITHUB_WORKSPACE/src/Builds/Linux/$SP_BRANCH-x86_64" \
-            "$GITHUB_WORKSPACE/artifacts/native" \
-            x86_64
+          # Compiled inside an ubuntu:20.04 container on purpose. A binary can
+          # only require the glibc its toolchain could see, and the runtime floor
+          # this package promises is GLIBC_2.31 -- exactly what 20.04 ships.
+          # Building on the 22.04 host image produced a gamedll needing 2.34 and
+          # a core needing 2.35, neither of which loads on any LTS below 24.04.
+          # The pwsh steps stay on the host; only the compile moves. The
+          # workspace is mounted, so the HL2SDK fetched above and the artifacts
+          # written below are the same files the upload step expects.
+          #
+          # SP_BRANCH and GITHUB_SHA are passed through the environment rather
+          # than spliced into the single-quoted script body.
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            -e SP_BRANCH \
+            -e GITHUB_SHA \
+            -e DEBIAN_FRONTEND=noninteractive \
+            ubuntu:20.04 \
+            bash -euc '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                build-essential cmake make binutils file unzip ca-certificates
+              echo "  $(gcc -dumpversion) $(ldd --version | head -1)"
+              bash ./scripts/ci/build-linux.sh \
+                "$SP_BRANCH" \
+                /work \
+                "/work/src/Builds/Linux/$SP_BRANCH-x86_64" \
+                /work/artifacts/native \
+                x86_64
+            '
+
+      # Report the glibc floor of what was just built, next to the budget the
+      # packaging job asserts. This makes a regression visible in the build log
+      # instead of only at the end of the pipeline. It warns rather than fails:
+      # the packaging job is the gate, and it names the offending file.
+      - name: Report the glibc floor of the built x86-64 objects
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          for f in "$GITHUB_WORKSPACE"/artifacts/native/*/linux-x86_64/*.so; do
+            [ -f "$f" ] || continue
+            floor=$(grep -aoE 'GLIBC_2\.[0-9]+' "$f" | sort -u -V | tail -1)
+            echo "  $(basename "$(dirname "$f")")/$(basename "$f"): ${floor:-none}"
+          done
 
       # build-linux.sh already hard-fails on a non-ELF64 image; these re-check
       # the exact pair of files that get uploaded and record their hashes.
