@@ -26,7 +26,8 @@
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
     "sdk_lib_linux64": "lib/public/linux64/tier1.a",
-    "reason": "KeyValues update for the 2026-09 game update; required by Source.Python issue #536; carries the Linux x86-64 tier1 library"
+    "sdk_lib_win64": "lib/public/x64/tier1.lib",
+    "reason": "KeyValues update for the 2026-09 game update; required by Source.Python issue #536; carries the Linux x86-64 tier1 library and the Windows x86-64 one"
   },
   "dods": {
     "branch": "dods",
@@ -34,7 +35,8 @@
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
     "sdk_lib_linux64": "lib/public/linux64/tier1.a",
-    "reason": "KeyValues update for the 2026-09 game update; carries the Linux x86-64 tier1 library"
+    "sdk_lib_win64": "lib/public/x64/tier1.lib",
+    "reason": "KeyValues update for the 2026-09 game update; carries the Linux x86-64 tier1 library and the Windows x86-64 one"
   },
   "hl2dm": {
     "branch": "hl2dm",
@@ -43,7 +45,7 @@
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
     "sdk_lib_linux64": "lib/public/linux64/tier1.a",
     "sdk_lib_win64": "lib/public/x64/tier1.lib",
-    "reason": "KeyValues update for the 2026-09 game update; also carries the x86-64 tier1 libraries used by PR #533"
+    "reason": "KeyValues update for the 2026-09 game update; also carries the x86-64 tier1 libraries used by PR #533, for both Linux and Windows"
   },
   "l4d2": {
     "branch": "l4d2",
@@ -58,6 +60,7 @@
     "sdk_lib": "lib/public/x86/tier1.lib",
     "sdk_lib_linux": "lib/public/linux/tier1_i486.a",
     "sdk_lib_linux64": "lib/public/linux64/tier1.a",
-    "reason": "Tweak KeyValues (2026-09-20), the OrangeBox SDK refresh that also landed on CSS/DODS/HL2DM; carries the Linux x86-64 tier1 library"
+    "sdk_lib_win64": "lib/public/x64/tier1.lib",
+    "reason": "Tweak KeyValues (2026-09-20), the OrangeBox SDK refresh that also landed on CSS/DODS/HL2DM; carries the Linux x86-64 tier1 library and the Windows x86-64 one"
   }
 }
