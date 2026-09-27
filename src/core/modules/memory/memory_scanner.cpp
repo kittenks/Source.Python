@@ -36,6 +36,32 @@
 	#include <sys/mman.h>
 	extern int PAGE_SIZE;
 	#define PAGE_ALIGN_UP(x) ((x + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1))
+
+	// ELF types for the architecture this core was built for.
+	//
+	// The symbol readers further down used Elf32_* unconditionally, which does
+	// not merely read the wrong fields on a 64-bit module, it reads them from
+	// the wrong offsets entirely: e_shoff is at 0x28 rather than 0x20, sh_offset
+	// and sh_size are 64-bit, and st_info is at offset 4 rather than 12. The
+	// consequence is that no symbol is ever found in a 64-bit engine module,
+	// which surfaced as
+	//   "Did not find address for BaseEntityOutput.fire_output"
+	// even though the mangled name is present in bin/linux64/server_srv.so.
+	//
+	// CBinaryManager::GetBaseAddress further down already selected per
+	// architecture; this is the same selection, shared by every ELF reader in
+	// this file.
+	#ifdef SOURCEPYTHON_X86_64
+		typedef Elf64_Ehdr SPElfHeader;
+		typedef Elf64_Shdr SPElfSectionHeader;
+		typedef Elf64_Sym SPElfSymbol;
+		#define SP_ELF_ST_TYPE(info) ELF64_ST_TYPE(info)
+	#else
+		typedef Elf32_Ehdr SPElfHeader;
+		typedef Elf32_Shdr SPElfSectionHeader;
+		typedef Elf32_Sym SPElfSymbol;
+		#define SP_ELF_ST_TYPE(info) ELF32_ST_TYPE(info)
+	#endif
 #endif
 
 #include "dynload.h"
@@ -230,9 +256,9 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 	struct stat dlstat;
 	int dlfile;
 	uintptr_t map_base;
-	Elf32_Ehdr *file_hdr;
-	Elf32_Shdr *sections, *shstrtab_hdr, *symtab_hdr, *strtab_hdr;
-	Elf32_Sym *symtab;
+	SPElfHeader *file_hdr;
+	SPElfSectionHeader *sections, *shstrtab_hdr, *symtab_hdr, *strtab_hdr;
+	SPElfSymbol *symtab;
 	const char *shstrtab, *strtab;
 	uint16_t section_count;
 	uint32_t symbol_count;
@@ -249,7 +275,7 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 	}
 
 	/* Map library file into memory */
-	file_hdr = (Elf32_Ehdr *)mmap(NULL, dlstat.st_size, PROT_READ, MAP_PRIVATE, dlfile, 0);
+	file_hdr = (SPElfHeader *)mmap(NULL, dlstat.st_size, PROT_READ, MAP_PRIVATE, dlfile, 0);
 	map_base = (uintptr_t)file_hdr;
 	close(dlfile);
 	if (file_hdr == MAP_FAILED)
@@ -261,7 +287,7 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "No section header string table has been found. Symbol: %s", szSymbol)
 	}
 
-	sections = (Elf32_Shdr *)(map_base + file_hdr->e_shoff);
+	sections = (SPElfSectionHeader *)(map_base + file_hdr->e_shoff);
 	section_count = file_hdr->e_shnum;
 	/* Get ELF section header string table */
 	shstrtab_hdr = &sections[file_hdr->e_shstrndx];
@@ -270,7 +296,7 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 	/* Iterate sections while looking for ELF symbol table and string table */
 	for (uint16_t i = 0; i < section_count; i++)
 	{
-		Elf32_Shdr &hdr = sections[i];
+		SPElfSectionHeader &hdr = sections[i];
 		const char *section_name = shstrtab + hdr.sh_name;
 
 		if (strcmp(section_name, ".symtab") == 0)
@@ -287,15 +313,15 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "No symbol table or string table found. Symbol: %s", szSymbol)
 	}
 
-	symtab = (Elf32_Sym *)(map_base + symtab_hdr->sh_offset);
+	symtab = (SPElfSymbol *)(map_base + symtab_hdr->sh_offset);
 	strtab = (const char *)(map_base + strtab_hdr->sh_offset);
 	symbol_count = symtab_hdr->sh_size / symtab_hdr->sh_entsize;
 
 	/* Iterate symbol table starting from the position we were at last time */
 	for (uint32_t i = 0; i < symbol_count; i++)
 	{
-		Elf32_Sym &sym = symtab[i];
-		unsigned char sym_type = ELF32_ST_TYPE(sym.st_info);
+		SPElfSymbol &sym = symtab[i];
+		unsigned char sym_type = SP_ELF_ST_TYPE(sym.st_info);
 		const char *sym_name = strtab + sym.st_name;
 
 		/* Skip symbols that are undefined or do not refer to functions or objects */
@@ -380,9 +406,9 @@ dict CBinaryFile::GetSymbols()
 	struct stat dlstat;
 	int dlfile;
 	uintptr_t map_base;
-	Elf32_Ehdr *file_hdr;
-	Elf32_Shdr *sections, *shstrtab_hdr, *symtab_hdr, *strtab_hdr;
-	Elf32_Sym *symtab;
+	SPElfHeader *file_hdr;
+	SPElfSectionHeader *sections, *shstrtab_hdr, *symtab_hdr, *strtab_hdr;
+	SPElfSymbol *symtab;
 	const char *shstrtab, *strtab;
 	uint16_t section_count;
 	uint32_t symbol_count;
@@ -399,7 +425,7 @@ dict CBinaryFile::GetSymbols()
 	}
 
 	/* Map library file into memory */
-	file_hdr = (Elf32_Ehdr *)mmap(NULL, dlstat.st_size, PROT_READ, MAP_PRIVATE, dlfile, 0);
+	file_hdr = (SPElfHeader *)mmap(NULL, dlstat.st_size, PROT_READ, MAP_PRIVATE, dlfile, 0);
 	map_base = (uintptr_t)file_hdr;
 	close(dlfile);
 	if (file_hdr == MAP_FAILED)
@@ -411,7 +437,7 @@ dict CBinaryFile::GetSymbols()
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "No section header string table has been found.")
 	}
 
-	sections = (Elf32_Shdr *)(map_base + file_hdr->e_shoff);
+	sections = (SPElfSectionHeader *)(map_base + file_hdr->e_shoff);
 	section_count = file_hdr->e_shnum;
 	/* Get ELF section header string table */
 	shstrtab_hdr = &sections[file_hdr->e_shstrndx];
@@ -420,7 +446,7 @@ dict CBinaryFile::GetSymbols()
 	/* Iterate sections while looking for ELF symbol table and string table */
 	for (uint16_t i = 0; i < section_count; i++)
 	{
-		Elf32_Shdr &hdr = sections[i];
+		SPElfSectionHeader &hdr = sections[i];
 		const char *section_name = shstrtab + hdr.sh_name;
 
 		if (strcmp(section_name, ".symtab") == 0)
@@ -437,15 +463,15 @@ dict CBinaryFile::GetSymbols()
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "No symbol table or string table found.")
 	}
 
-	symtab = (Elf32_Sym *)(map_base + symtab_hdr->sh_offset);
+	symtab = (SPElfSymbol *)(map_base + symtab_hdr->sh_offset);
 	strtab = (const char *)(map_base + strtab_hdr->sh_offset);
 	symbol_count = symtab_hdr->sh_size / symtab_hdr->sh_entsize;
 
 	/* Iterate symbol table starting from the position we were at last time */
 	for (uint32_t i = 0; i < symbol_count; i++)
 	{
-		Elf32_Sym &sym = symtab[i];
-		unsigned char sym_type = ELF32_ST_TYPE(sym.st_info);
+		SPElfSymbol &sym = symtab[i];
+		unsigned char sym_type = SP_ELF_ST_TYPE(sym.st_info);
 		const char *sym_name = strtab + sym.st_name;
 
 		/* Skip symbols that are undefined or do not refer to functions or objects */
