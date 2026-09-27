@@ -197,6 +197,34 @@ tar xf "boost_${BOOST_VERSION//./_}.tar.bz2"
 )
 
 # ---------------------------------------------------------------------------
+log "AsmJit"
+# ---------------------------------------------------------------------------
+# thirdparty/AsmJit/lib/linux64/libasmjit.a referenced __isoc23_strtol, the
+# C23 rename of strtol that arrived in glibc 2.38. A 2.31 host has never heard
+# of it, so core.so failed to load with an undefined symbol. The x86 copy does
+# not reference it.
+#
+# The whole AsmJit 1.14.0 source is committed under thirdparty/AsmJit/include --
+# every .cpp sits beside its header -- so this builds the library from the exact
+# sources those headers came from, with no download and no version drift. Only
+# upstream's CMakeLists.txt is absent, and it does nothing here that the loop
+# below does not: glob the sources, compile them, emit a static archive.
+mkdir -p "$WORK/asmjit"
+tar xzf "${ASMJIT_SOURCE_TGZ:?set ASMJIT_SOURCE_TGZ to a tarball of thirdparty/AsmJit/include}" \
+    -C "$WORK/asmjit"
+(
+    cd "$WORK/asmjit"
+    mkdir -p obj
+    for cpp in $(find include -name '*.cpp' | sort); do
+        g++ -c -O2 -fPIC -m64 -std=c++11 -w \
+            -Iinclude -DASMJIT_STATIC -DASMJIT_NO_LIBRARY \
+            "$cpp" -o "obj/$(echo "$cpp" | tr '/' '_' | sed 's/\.cpp$/.o/')"
+    done
+    ar rcs libasmjit.a obj/*.o
+    ranlib libasmjit.a 2>/dev/null || true
+)
+
+# ---------------------------------------------------------------------------
 log "assemble"
 # ---------------------------------------------------------------------------
 mkdir -p "$OUT/thirdparty/python_linux64/libs" \
@@ -217,6 +245,8 @@ cp -fL "$PREFIX/lib/libsqlite3.so.0"                "$OUT/Python3/plat-linux64/"
 cp -fL "$PREFIX/lib/libz.so.1.2.11"                 "$OUT/Python3/plat-linux64/"
 cp -f "$WORK/boost_${BOOST_VERSION//./_}/stage/lib/libboost_python313.a"  "$OUT/thirdparty/boost/lib/linux64/"
 cp -f "$WORK/boost_${BOOST_VERSION//./_}/stage/lib/libboost_filesystem.a" "$OUT/thirdparty/boost/lib/linux64/"
+mkdir -p "$OUT/thirdparty/AsmJit/lib/linux64"
+cp -f "$WORK/asmjit/libasmjit.a" "$OUT/thirdparty/AsmJit/lib/linux64/"
 # boost_system is header-only in modern Boost; an empty archive keeps the
 # link line in linux.base.cmake unchanged.
 : > "$OUT/thirdparty/boost/lib/linux64/libboost_system.a"
@@ -230,6 +260,7 @@ strip --strip-unneeded "$OUT/Python3/plat-linux64/libpython$PYTHON_SERIES.so.1.0
 strip --strip-unneeded "$OUT/Python3/plat-linux64/libsqlite3.so.0"
 strip -g "$OUT/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.a"
 strip -g "$OUT/thirdparty/boost/lib/linux64/"*.a
+strip -g "$OUT/thirdparty/AsmJit/lib/linux64/libasmjit.a"
 
 # ---------------------------------------------------------------------------
 log "verify the floor"
@@ -249,10 +280,19 @@ if [ "$worst" -gt 31 ]; then
     echo "FAIL: the runtime requires glibc 2.$worst but the budget is 2.31." >&2
     exit 1
 fi
-if grep -rqF '_M_replace_cold' "$OUT/thirdparty/boost/lib/linux64/"; then
-    echo "FAIL: a Boost archive references _M_replace_cold, which no GCC 9 runtime exports." >&2
-    exit 1
-fi
+# A version check cannot see this class of problem at all: a prebuilt can name
+# a symbol that only exists in a newer libc without pinning any version, which
+# is exactly how __isoc23_strtol and _M_replace_cold got in. Look for the
+# symbol names themselves.
+for sym in '_M_replace_cold' '__isoc23_'; do
+    if grep -rlF "$sym" "$OUT/thirdparty" 2>/dev/null | grep -q .; then
+        echo "FAIL: a prebuilt references '$sym', which this toolchain cannot emit" >&2
+        echo "      and an older host does not provide." >&2
+        grep -rlF "$sym" "$OUT/thirdparty" | sed 's/^/      /' >&2
+        exit 1
+    fi
+done
+echo "OK: no _M_replace_cold, no __isoc23_, no libffi dependency, floor within budget"
 # The CI step that ldd's this module fails on an unresolved dependency, and
 # libffi.so.7 is exactly the name that is absent from modern 64-bit hosts.
 if grep -rl 'libffi\.so' "$OUT/Python3/lib-dynload-linux64/" 2>/dev/null | grep -q .; then
