@@ -352,27 +352,28 @@ jobs:
           # x86-32 artifact cannot ship inside an archive labelled x86-64.
           #
           # -MaxGlibc64 is the glibc floor this archive promises to load on.
-          # It is 2.38 today, and that is a debt, not a design:
+          # 2.31 is Ubuntu 20.04 LTS: the oldest LTS still supported, the
+          # manylinux_2_31 baseline, and one below what the engine itself needs
+          # (Valve's 64-bit libraries stop at GLIBC_2.29). A binary built
+          # against an older glibc also runs on every newer distribution, so
+          # this single value covers the whole supported range rather than
+          # trading one end for the other.
           #
-          #   addons/source-python/Python3/plat-linux64/libpython3.13.so.1.0  2.38
-          #   addons/source-python/Python3/plat-linux64/libsqlite3.so.0      2.38
-          #   addons/source-python/bin/core.so                                2.30
-          #   addons/source-python.so                                          2.29
+          # The measured floors, and what the assertion is protecting:
           #
-          # Our own objects sit at 2.29/2.30 because the compile runs in an
-          # ubuntu:20.04 container. The two files above are committed prebuilts
-          # and nothing we control raises the floor that far: Valve's own
-          # 64-bit engine libraries need only GLIBC_2.29, and the 32-bit
-          # libpython shipped in the same archive needs 2.30. They were
-          # produced on a modern distro and docs/linux-x86_64.md records no
-          # recipe for them, so they cannot currently be rebuilt older.
+          #   addons/source-python.so                              GLIBC_2.29
+          #   addons/source-python/bin/core.so                    GLIBC_2.30
+          #   Python3/plat-linux64/libpython3.13.so.1.0           GLIBC_2.30
+          #   Python3/plat-linux64/libsqlite3.so.0                GLIBC_2.29
+          #   Python3/lib-dynload-linux64/*.so (68)   worst       GLIBC_2.29
           #
-          # 2.38 means Ubuntu 24.04 and nothing older, which excludes 20.04 and
-          # 22.04. libstdc++ is a second, separate floor the glibc check cannot
-          # see: thirdparty/boost/lib/linux64/libboost_filesystem.a references
-          # std::__cxx11::basic_string::_M_replace_cold, which no GCC 9 runtime
-          # exports. The target is 2.31, and the assertion will move down to it
-          # as soon as those two prebuits are rebuilt against an older toolchain.
+          # All of those come from building inside an ubuntu:20.04 container;
+          # see scripts/ci/build-linux-x86_64-runtime.sh, which also keeps the
+          # committed prebuilts from drifting back onto a newer toolchain. That
+          # script is the reason this value is enforceable: the prebuilts used
+          # to be committed with no record of how they were built, needed
+          # GLIBC_2.38, and nothing noticed until a real 64-bit host refused to
+          # load the addon.
           #
           # The x86 pipeline is unaffected: its natives are ELF32, and the
           # plat-linux64/ copy in a 32-bit archive is never dlopen'd.
@@ -381,7 +382,7 @@ jobs:
             -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
             -Branches $env:SP_BRANCH `
             -RequiredPlatforms @('linux-x86_64') `
-            -MaxGlibc64 '2.38' `
+            -MaxGlibc64 '2.31' `
             -SkipSourceArchive
 
       - name: Upload the x86-64 archive
