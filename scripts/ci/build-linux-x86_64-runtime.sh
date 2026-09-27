@@ -54,6 +54,22 @@ PREFIX="${PREFIX:-$WORK/prefix}"
 OUT="${OUT:-$WORK/out}"
 MIRROR="${MIRROR:-https://mirrors.tuna.tsinghua.edu.cn}"
 
+# When DEST is set, the artefacts are copied into that source tree at the paths
+# the x86-64 build actually consumes, so the build uses what this script just
+# produced rather than whatever happens to be committed. That inverts the
+# failure mode: a prebuilt drifted onto a newer toolchain can no longer reach
+# a build at all, instead of reaching every host that installs the package.
+#
+# DEST is resolved from this script's own location so the script keeps working
+# from a checkout regardless of the caller's working directory.
+if [ -z "${DEST:-}" ]; then
+    DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+# The whole AsmJit source is committed, every .cpp beside its header, so it is
+# built from the tree rather than downloaded: no version drift is possible and
+# the archive matches the headers that ship.
+ASMJIT_SOURCE_DIR="${ASMJIT_SOURCE_DIR:-$DEST/src/thirdparty/AsmJit/include}"
+
 log() { printf '=== %s ===\n' "$*"; }
 
 fetch() {
@@ -209,9 +225,14 @@ log "AsmJit"
 # sources those headers came from, with no download and no version drift. Only
 # upstream's CMakeLists.txt is absent, and it does nothing here that the loop
 # below does not: glob the sources, compile them, emit a static archive.
+if [ ! -d "$ASMJIT_SOURCE_DIR" ]; then
+    echo "FAIL: AsmJit sources not found at $ASMJIT_SOURCE_DIR" >&2
+    exit 1
+fi
+echo "  sources: $ASMJIT_SOURCE_DIR ($(find "$ASMJIT_SOURCE_DIR" -name '*.cpp' | wc -l) .cpp files)"
+rm -rf "$WORK/asmjit"
 mkdir -p "$WORK/asmjit"
-tar xzf "${ASMJIT_SOURCE_TGZ:?set ASMJIT_SOURCE_TGZ to a tarball of thirdparty/AsmJit/include}" \
-    -C "$WORK/asmjit"
+cp -r "$ASMJIT_SOURCE_DIR" "$WORK/asmjit/include"
 (
     cd "$WORK/asmjit"
     mkdir -p obj
@@ -292,11 +313,94 @@ for sym in '_M_replace_cold' '__isoc23_'; do
         exit 1
     fi
 done
-echo "OK: no _M_replace_cold, no __isoc23_, no libffi dependency, floor within budget"
 # The CI step that ldd's this module fails on an unresolved dependency, and
 # libffi.so.7 is exactly the name that is absent from modern 64-bit hosts.
 if grep -rl 'libffi\.so' "$OUT/Python3/lib-dynload-linux64/" 2>/dev/null | grep -q .; then
     echo "FAIL: an extension module still needs libffi.so; the static link did not take." >&2
     exit 1
 fi
-echo "OK: no _M_replace_cold, no libffi dependency, floor within budget"
+echo "OK: no _M_replace_cold, no __isoc23_, no libffi dependency, floor within budget"
+
+# ---------------------------------------------------------------------------
+log "stage into the source tree"
+# ---------------------------------------------------------------------------
+# The verification above ran against $OUT. Only now is anything copied over the
+# tree, so a failure can never leave the source tree holding a half-built
+# runtime.
+if [ "$DEST" = "" ]; then
+    echo "  DEST is empty, leaving the artefacts in $OUT"
+    exit 0
+fi
+echo "  DEST=$DEST"
+
+# Build-time inputs: what cmake links against.
+install -D -m644 "$OUT/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.a" \
+    "$DEST/src/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.a"
+install -D -m644 "$OUT/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.so.1.0" \
+    "$DEST/src/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.so.1.0"
+install -D -m644 "$OUT/thirdparty/boost/lib/linux64/libboost_python313.a" \
+    "$DEST/src/thirdparty/boost/lib/linux64/libboost_python313.a"
+install -D -m644 "$OUT/thirdparty/boost/lib/linux64/libboost_filesystem.a" \
+    "$DEST/src/thirdparty/boost/lib/linux64/libboost_filesystem.a"
+install -D -m644 "$OUT/thirdparty/boost/lib/linux64/libboost_system.a" \
+    "$DEST/src/thirdparty/boost/lib/linux64/libboost_system.a"
+install -D -m644 "$OUT/thirdparty/AsmJit/lib/linux64/libasmjit.a" \
+    "$DEST/src/thirdparty/AsmJit/lib/linux64/libasmjit.a"
+
+# Headers must match the library: pyconfig.h is generated per build, so a stale
+# one silently disagrees with the .a it is compiled against.
+#
+# Only the generated headers are removed, not the whole directory. The committed
+# tree also carries internal/mimalloc, which this build does not generate --
+# upstream only uses it on Windows -- and a wholesale rm drops it. That is not
+# hypothetical: doing exactly that by hand during this work deleted six headers
+# and had to be reverted out of an unrelated commit.
+install -d "$DEST/src/thirdparty/python_linux64/include" \
+           "$DEST/src/thirdparty/python_linux64/include/cpython" \
+           "$DEST/src/thirdparty/python_linux64/include/internal"
+rm -f "$DEST/src/thirdparty/python_linux64/include"/*.h
+rm -f "$DEST/src/thirdparty/python_linux64/include/cpython"/*.h
+rm -f "$DEST/src/thirdparty/python_linux64/include/internal"/*.h
+cp -f "$OUT/thirdparty/python_linux64/include"/*.h \
+      "$DEST/src/thirdparty/python_linux64/include/"
+cp -f "$OUT/thirdparty/python_linux64/include/cpython"/*.h \
+      "$DEST/src/thirdparty/python_linux64/include/cpython/"
+cp -f "$OUT/thirdparty/python_linux64/include/internal"/*.h \
+      "$DEST/src/thirdparty/python_linux64/include/internal/"
+
+# Shipped runtime.
+install -d "$DEST/addons/source-python/Python3/plat-linux64"
+install -D -m755 "$OUT/Python3/plat-linux64/libpython$PYTHON_SERIES.so.1.0" \
+    "$DEST/addons/source-python/Python3/plat-linux64/libpython$PYTHON_SERIES.so.1.0"
+install -D -m755 "$OUT/Python3/plat-linux64/libsqlite3.so.0" \
+    "$DEST/addons/source-python/Python3/plat-linux64/libsqlite3.so.0"
+install -D -m755 "$OUT/Python3/plat-linux64/libz.so.1.2.11" \
+    "$DEST/addons/source-python/Python3/plat-linux64/libz.so.1.2.11"
+
+# The module set is replaced wholesale rather than merged. A merge would leave
+# a stale module from a previous build in place, which is precisely the sort of
+# thing that produces a package that passes every check and still misbehaves.
+rm -rf "$DEST/addons/source-python/Python3/lib-dynload-linux64"
+install -d "$DEST/addons/source-python/Python3/lib-dynload-linux64"
+cp -f "$OUT/Python3/lib-dynload-linux64"/*.so \
+      "$DEST/addons/source-python/Python3/lib-dynload-linux64/"
+
+echo
+echo "staged:"
+printf '  %-58s %12d B\n' \
+    "src/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.a" \
+    "$(stat -c%s "$DEST/src/thirdparty/python_linux64/libs/libpython$PYTHON_SERIES.a")"
+for f in libboost_python313.a libboost_filesystem.a; do
+    printf '  %-58s %12d B\n' "src/thirdparty/boost/lib/linux64/$f" \
+        "$(stat -c%s "$DEST/src/thirdparty/boost/lib/linux64/$f")"
+done
+printf '  %-58s %12d B\n' "src/thirdparty/AsmJit/lib/linux64/libasmjit.a" \
+    "$(stat -c%s "$DEST/src/thirdparty/AsmJit/lib/linux64/libasmjit.a")"
+for f in libpython$PYTHON_SERIES.so.1.0 libsqlite3.so.0 libz.so.1.2.11; do
+    printf '  %-58s %12d B  glibc<=%s\n' \
+        "addons/source-python/Python3/plat-linux64/$f" \
+        "$(stat -c%s "$DEST/addons/source-python/Python3/plat-linux64/$f")" \
+        "$(grep -aoE 'GLIBC_2\.[0-9]+' "$DEST/addons/source-python/Python3/plat-linux64/$f" | sort -u -V | tail -1)"
+done
+echo "  addons/source-python/Python3/lib-dynload-linux64/  $(ls -1 "$DEST/addons/source-python/Python3/lib-dynload-linux64" | wc -l) modules"
+echo "  headers: $(find "$DEST/src/thirdparty/python_linux64/include" -name '*.h' | wc -l) files"
