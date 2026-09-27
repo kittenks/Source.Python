@@ -53,40 +53,53 @@ used by the x86-64 `_ctypes` module and was not introduced by this port.
 
 ## Runtime floor
 
-The package currently loads only on Ubuntu 24.04. Both of the floors below
-come from committed prebuilts, and neither is imposed by the engine.
+The package loads on Ubuntu 20.04 LTS and on everything newer. 2.31 is the
+oldest LTS still supported, the `manylinux_2_31` baseline, and one below what
+the engine itself needs. A binary built against an older glibc also runs on
+every newer distribution, so one artefact covers the whole range.
 
 | file | requires | source |
 |---|---|---|
-| `Python3/plat-linux64/libpython3.13.so.1.0` | `GLIBC_2.38` | committed prebuilt |
-| `Python3/plat-linux64/libsqlite3.so.0` | `GLIBC_2.38` | committed prebuilt |
-| `addons/source-python/bin/core.so` | `GLIBC_2.30`, `GLIBCXX_3.4.21` | built by the pipeline |
-| `addons/source-python.so` | `GLIBC_2.29`, `GLIBCXX_3.4.21` | built by the pipeline |
+| `addons/source-python.so` | `GLIBC_2.29` | built by the pipeline |
+| `addons/source-python/bin/core.so` | `GLIBC_2.30` | built by the pipeline |
+| `Python3/plat-linux64/libpython3.13.so.1.0` | `GLIBC_2.30` | committed prebuilt |
+| `Python3/plat-linux64/libsqlite3.so.0` | `GLIBC_2.29` | committed prebuilt |
+| `Python3/plat-linux64/libz.so.1.2.11` | `GLIBC_2.14` | committed prebuilt |
+| `Python3/lib-dynload-linux64/*.so` (68) | `GLIBC_2.29` worst | committed prebuilt |
 | Valve's own `bin/linux64/*.so` (all 14) | `GLIBC_2.29` | Valve |
 | `Python3/plat-linux/libpython3.13.so.1.0` (x86) | `GLIBC_2.30` | committed prebuilt |
 
-The two objects the pipeline builds are compiled in an `ubuntu:20.04`
-container so that the compiler cannot emit a symbol version newer than
-2.31. Building on the 22.04 runner image instead produced a gamedll at
-2.34 and a core at 2.35, neither of which loads on a supported LTS.
+Everything in the x86-64 column is built inside an `ubuntu:20.04` container, so
+the compiler cannot emit a symbol version newer than 2.31. That applies both to
+what the pipeline compiles and to the prebuilts it links, and
+`scripts/ci/build-linux-x86_64-runtime.sh` is what produces the prebuilts.
 
-`libstdc++` is a separate floor that the glibc check cannot see.
-`thirdparty/boost/lib/linux64/libboost_filesystem.a` references
-`std::__cxx11::basic_string<...>::_M_replace_cold`, a libstdc++ internal
-that no GCC 9 runtime exports, so the package also needs a libstdc++ from
-a compiler newer than GCC 9. The x86 `thirdparty/boost/lib/` copy does not
-reference it.
+There is a second, independent floor that a glibc check cannot see:
+`libstdc++`. The x86-64 `thirdparty/boost/lib/linux64/` archives used to
+reference `std::__cxx11::basic_string<...>::_M_replace_cold`, a libstdc++
+internal that no GCC 9 runtime exports, so the addon failed to `dlopen` with
+`undefined symbol` on any host whose libstdc++ predates it. Those archives are
+rebuilt with GCC 9 and no longer reference it. The x86 copies never did, which
+is what made this an x86-64 problem rather than a general one.
 
-Every one of these x86-64 prebuilts was produced on a newer toolchain than
-its x86 counterpart, and **this repository records no recipe for any of
-them**: the baseline list above names versions, not procedures. That is why
-the floor is 2.38 and cannot simply be lowered. Rebuilding the x86-64
-CPython runtime and Boost.Python on an older sysroot is the fix, and until
-then `scripts/ci/verify-packages.ps1 -MaxGlibc64` is set to the floor that
-can actually be delivered.
+Two things in the prebuilt layout are not free choices:
+
+- The extension modules carry `RUNPATH $ORIGIN/../plat-linux64`, the same form
+  `core.so` uses to find libpython, so they locate the sibling
+  `libsqlite3.so.0` and `libz.so.1.2.11` without depending on Source.Python's
+  loader having preloaded them first.
+- `_ctypes` must not gain a `DT_NEEDED` for `libffi.so.7`. That SONAME is the
+  32-bit module's legacy dependency and is absent from modern 64-bit hosts.
+  CPython 3.13 prefers the system libffi and has no bundled copy, so
+  `libffi.a` is placed in a directory of its own ahead of the one holding the
+  shared object: `ld` resolves `-lffi` against the first directory containing
+  either and prefers the `.so` within a directory.
+
+`scripts/ci/verify-packages.ps1 -MaxGlibc64` is set to `2.31` in the x86-64
+pipeline and asserts this, so a prebuilt that drifts back onto a newer
+toolchain fails the build rather than reaching a host.
 
 Measured on a real 64-bit TF2 dedicated server (Valve app 232250,
-`srcds_linux64`) running Ubuntu 20.04.2, x86-64, glibc 2.31. After the
-link-name fix, the engine loads the addon and the next failure is
-`undefined symbol: ..._M_replace_cold`, then the libpython floor.
+`srcds_linux64`) running Ubuntu 20.04.2, x86-64, glibc 2.31 — the oldest
+supported target, and the one this floor is chosen for.
 
