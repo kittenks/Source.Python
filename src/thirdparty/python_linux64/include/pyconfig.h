@@ -125,7 +125,7 @@
 #define HAVE_BUILTIN_ATOMIC 1
 
 /* Define to 1 if you have the <bzlib.h> header file. */
-/* #undef HAVE_BZLIB_H */
+#define HAVE_BZLIB_H 1
 
 /* Define to 1 if you have the 'chflags' function. */
 /* #undef HAVE_CHFLAGS */
@@ -158,10 +158,10 @@
 #define HAVE_CLOCK_T 1
 
 /* Define to 1 if you have the `closefrom' function. */
-#define HAVE_CLOSEFROM 1
+/* #undef HAVE_CLOSEFROM */
 
 /* Define to 1 if you have the `close_range' function. */
-#define HAVE_CLOSE_RANGE 1
+/* #undef HAVE_CLOSE_RANGE */
 
 /* Define if the C compiler supports computed gotos. */
 #define HAVE_COMPUTED_GOTOS 1
@@ -185,40 +185,40 @@
 /* #undef HAVE_CTERMID_R */
 
 /* Define if you have the 'filter' function. */
-/* #undef HAVE_CURSES_FILTER */
+#define HAVE_CURSES_FILTER 1
 
 /* Define to 1 if you have the <curses.h> header file. */
-/* #undef HAVE_CURSES_H */
+#define HAVE_CURSES_H 1
 
 /* Define if you have the 'has_key' function. */
-/* #undef HAVE_CURSES_HAS_KEY */
+#define HAVE_CURSES_HAS_KEY 1
 
 /* Define if you have the 'immedok' function. */
-/* #undef HAVE_CURSES_IMMEDOK */
+#define HAVE_CURSES_IMMEDOK 1
 
 /* Define if you have the 'is_pad' function. */
-/* #undef HAVE_CURSES_IS_PAD */
+#define HAVE_CURSES_IS_PAD 1
 
 /* Define if you have the 'is_term_resized' function. */
-/* #undef HAVE_CURSES_IS_TERM_RESIZED */
+#define HAVE_CURSES_IS_TERM_RESIZED 1
 
 /* Define if you have the 'resizeterm' function. */
-/* #undef HAVE_CURSES_RESIZETERM */
+#define HAVE_CURSES_RESIZETERM 1
 
 /* Define if you have the 'resize_term' function. */
-/* #undef HAVE_CURSES_RESIZE_TERM */
+#define HAVE_CURSES_RESIZE_TERM 1
 
 /* Define if you have the 'syncok' function. */
-/* #undef HAVE_CURSES_SYNCOK */
+#define HAVE_CURSES_SYNCOK 1
 
 /* Define if you have the 'typeahead' function. */
-/* #undef HAVE_CURSES_TYPEAHEAD */
+#define HAVE_CURSES_TYPEAHEAD 1
 
 /* Define if you have the 'use_env' function. */
-/* #undef HAVE_CURSES_USE_ENV */
+#define HAVE_CURSES_USE_ENV 1
 
 /* Define if you have the 'wchgat' function. */
-/* #undef HAVE_CURSES_WCHGAT */
+#define HAVE_CURSES_WCHGAT 1
 
 /* Define to 1 if you have the <db.h> header file. */
 /* #undef HAVE_DB_H */
@@ -372,13 +372,13 @@
 #define HAVE_FEXECVE 1
 
 /* Define if you have the 'ffi_closure_alloc' function. */
-/* #undef HAVE_FFI_CLOSURE_ALLOC */
+#define HAVE_FFI_CLOSURE_ALLOC 1
 
 /* Define if you have the 'ffi_prep_cif_var' function. */
-/* #undef HAVE_FFI_PREP_CIF_VAR */
+#define HAVE_FFI_PREP_CIF_VAR 1
 
 /* Define if you have the 'ffi_prep_closure_loc' function. */
-/* #undef HAVE_FFI_PREP_CLOSURE_LOC */
+#define HAVE_FFI_PREP_CLOSURE_LOC 1
 
 /* Define to 1 if you have the `flock' function. */
 #define HAVE_FLOCK 1
@@ -692,7 +692,7 @@
 /* #undef HAVE_LIBSENDFILE */
 
 /* Define to 1 if you have the `sqlite3' library (-lsqlite3). */
-/* #undef HAVE_LIBSQLITE3 */
+#define HAVE_LIBSQLITE3 1
 
 /* Define to 1 if you have the <libutil.h> header file. */
 /* #undef HAVE_LIBUTIL_H */
@@ -779,7 +779,7 @@
 #define HAVE_LUTIMES 1
 
 /* Define to 1 if you have the <lzma.h> header file. */
-/* #undef HAVE_LZMA_H */
+#define HAVE_LZMA_H 1
 
 /* Define to 1 if you have the `madvise' function. */
 #define HAVE_MADVISE 1
@@ -833,19 +833,19 @@
 /* #undef HAVE_NCURSESW */
 
 /* Define to 1 if you have the <ncursesw/curses.h> header file. */
-/* #undef HAVE_NCURSESW_CURSES_H */
+#define HAVE_NCURSESW_CURSES_H 1
 
 /* Define to 1 if you have the <ncursesw/ncurses.h> header file. */
-/* #undef HAVE_NCURSESW_NCURSES_H */
+#define HAVE_NCURSESW_NCURSES_H 1
 
 /* Define to 1 if you have the <ncursesw/panel.h> header file. */
-/* #undef HAVE_NCURSESW_PANEL_H */
+#define HAVE_NCURSESW_PANEL_H 1
 
 /* Define to 1 if you have the <ncurses/curses.h> header file. */
 /* #undef HAVE_NCURSES_CURSES_H */
 
 /* Define to 1 if you have the <ncurses.h> header file. */
-/* #undef HAVE_NCURSES_H */
+#define HAVE_NCURSES_H 1
 
 /* Define to 1 if you have the <ncurses/ncurses.h> header file. */
 /* #undef HAVE_NCURSES_NCURSES_H */
@@ -903,7 +903,7 @@
 /* #undef HAVE_PANELW */
 
 /* Define to 1 if you have the <panel.h> header file. */
-/* #undef HAVE_PANEL_H */
+#define HAVE_PANEL_H 1
 
 /* Define to 1 if you have the `pathconf' function. */
 #define HAVE_PATHCONF 1
@@ -943,7 +943,7 @@
 
 /* Define to 1 if you have the `posix_spawn_file_actions_addclosefrom_np'
    function. */
-#define HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP 1
+/* #undef HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP */
 
 /* Define to 1 if you have the `pread' function. */
 #define HAVE_PREAD 1
@@ -1013,7 +1013,7 @@
 #define HAVE_PWRITEV2 1
 
 /* Define to 1 if you have the <readline/readline.h> header file. */
-/* #undef HAVE_READLINE_READLINE_H */
+#define HAVE_READLINE_READLINE_H 1
 
 /* Define to 1 if you have the `readlink' function. */
 #define HAVE_READLINK 1
@@ -1034,31 +1034,31 @@
 #define HAVE_RENAMEAT 1
 
 /* Define if readline supports append_history */
-/* #undef HAVE_RL_APPEND_HISTORY */
+#define HAVE_RL_APPEND_HISTORY 1
 
 /* Define if you can turn off readline's signal handling. */
-/* #undef HAVE_RL_CATCH_SIGNAL */
+#define HAVE_RL_CATCH_SIGNAL 1
 
 /* Define to 1 if the system has the type `rl_compdisp_func_t'. */
-/* #undef HAVE_RL_COMPDISP_FUNC_T */
+#define HAVE_RL_COMPDISP_FUNC_T 1
 
 /* Define if you have readline 2.2 */
-/* #undef HAVE_RL_COMPLETION_APPEND_CHARACTER */
+#define HAVE_RL_COMPLETION_APPEND_CHARACTER 1
 
 /* Define if you have readline 4.0 */
-/* #undef HAVE_RL_COMPLETION_DISPLAY_MATCHES_HOOK */
+#define HAVE_RL_COMPLETION_DISPLAY_MATCHES_HOOK 1
 
 /* Define if you have readline 4.2 */
-/* #undef HAVE_RL_COMPLETION_MATCHES */
+#define HAVE_RL_COMPLETION_MATCHES 1
 
 /* Define if you have rl_completion_suppress_append */
-/* #undef HAVE_RL_COMPLETION_SUPPRESS_APPEND */
+#define HAVE_RL_COMPLETION_SUPPRESS_APPEND 1
 
 /* Define if you have readline 4.0 */
-/* #undef HAVE_RL_PRE_INPUT_HOOK */
+#define HAVE_RL_PRE_INPUT_HOOK 1
 
 /* Define if you have readline 4.0 */
-/* #undef HAVE_RL_RESIZE_TERMINAL */
+#define HAVE_RL_RESIZE_TERMINAL 1
 
 /* Define to 1 if you have the `rtpSpawn' function. */
 /* #undef HAVE_RTPSPAWN */
@@ -1268,7 +1268,7 @@
 #define HAVE_STRING_H 1
 
 /* Define to 1 if you have the `strlcpy' function. */
-#define HAVE_STRLCPY 1
+/* #undef HAVE_STRLCPY */
 
 /* Define to 1 if you have the <stropts.h> header file. */
 /* #undef HAVE_STROPTS_H */
@@ -1387,7 +1387,7 @@
 #define HAVE_SYS_PARAM_H 1
 
 /* Define to 1 if you have the <sys/pidfd.h> header file. */
-#define HAVE_SYS_PIDFD_H 1
+/* #undef HAVE_SYS_PIDFD_H */
 
 /* Define to 1 if you have the <sys/poll.h> header file. */
 #define HAVE_SYS_POLL_H 1
@@ -1468,7 +1468,7 @@
 #define HAVE_TERMIOS_H 1
 
 /* Define to 1 if you have the <term.h> header file. */
-/* #undef HAVE_TERM_H */
+#define HAVE_TERM_H 1
 
 /* Define to 1 if you have the `timegm' function. */
 #define HAVE_TIMEGM 1
@@ -1547,13 +1547,13 @@
 /* #undef HAVE_UUID_ENC_BE */
 
 /* Define if uuid_generate_time_safe() exists. */
-/* #undef HAVE_UUID_GENERATE_TIME_SAFE */
+#define HAVE_UUID_GENERATE_TIME_SAFE 1
 
 /* Define to 1 if you have the <uuid.h> header file. */
 /* #undef HAVE_UUID_H */
 
 /* Define to 1 if you have the <uuid/uuid.h> header file. */
-/* #undef HAVE_UUID_UUID_H */
+#define HAVE_UUID_UUID_H 1
 
 /* Define to 1 if you have the `vfork' function. */
 #define HAVE_VFORK 1
@@ -1661,7 +1661,7 @@
 /* #undef PY_SQLITE_ENABLE_LOAD_EXTENSION */
 
 /* Define if SQLite was compiled with the serialize API */
-/* #undef PY_SQLITE_HAVE_SERIALIZE */
+#define PY_SQLITE_HAVE_SERIALIZE 1
 
 /* Default cipher suites list for ssl module. 1: Python's preferred selection,
    2: leave OpenSSL defaults untouched, 0: custom string */
@@ -1687,7 +1687,7 @@
 /* #undef Py_HASH_ALGORITHM */
 
 /* Define if rl_startup_hook takes arguments */
-/* #undef Py_RL_STARTUP_HOOK_TAKES_ARGS */
+#define Py_RL_STARTUP_HOOK_TAKES_ARGS 1
 
 /* Define if you want to enable internal statistics gathering. */
 /* #undef Py_STATS */
@@ -1869,7 +1869,7 @@
 
 
 /* Define if WINDOW in curses.h offers a field _flags. */
-/* #undef WINDOW_HAS_FLAGS */
+#define WINDOW_HAS_FLAGS 1
 
 /* Define if you want build the _decimal module using a coroutine-local rather
    than a thread-local context */
@@ -1954,7 +1954,7 @@
 #define _PYTHONFRAMEWORK ""
 
 /* Define to force use of thread-safe errno, h_errno, and other functions */
-#define _REENTRANT 1
+/* #undef _REENTRANT */
 
 /* Define to 1 if you want to emulate getpid() on WASI */
 /* #undef _WASI_EMULATED_GETPID */
@@ -2011,3 +2011,4 @@
 #endif
 
 #endif /*Py_PYCONFIG_H*/
+
