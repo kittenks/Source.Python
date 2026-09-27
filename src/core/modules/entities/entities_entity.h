@@ -37,6 +37,14 @@ using namespace boost::python;
 #include "utilities/baseentity.h"
 #include "toolframework/itoolentity.h"
 
+// baseentity.h and itoolentity.h reach the HL2SDK's tier1/strtools.h, which
+// defines a macro named str_size. Boost above was already parsed, so nothing
+// broke here - but any Boost header the *including* translation unit pulls in
+// next would be, and that is exactly what happens: entities_transmit.h
+// includes boost/unordered_map.hpp two lines after including this file, and
+// that is where the failure surfaced. See utilities/sdk_macro_hygiene.h.
+#include "utilities/sdk_macro_hygiene.h"
+
 // Don't remove this! It's required for the
 // BOOST_PYTHON_OPAQUE_SPECIALIZED_TYPE_ID(CBaseEntity) definition.
 // Otherwise you will get "undefined symbol: _ZTI11CBaseEntity".

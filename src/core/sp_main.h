@@ -38,6 +38,14 @@
 #include "game/server/entitylist.h"
 #include "datacache/imdlcache.h"
 
+// The HL2SDK headers above reach tier1/strtools.h, which defines a macro named
+// str_size. That name is also a Boost function, so any Boost header parsed
+// after this point fails with diagnostics that point at Boost and never at the
+// SDK. See utilities/sdk_macro_hygiene.h for the preprocessed evidence.
+// entitylist_base.h and baseentity.h both pull Boost in, so this has to come
+// after them and not merely at the top of the file.
+#include "utilities/sdk_macro_hygiene.h"
+
 
 //---------------------------------------------------------------------------------
 // Definitions

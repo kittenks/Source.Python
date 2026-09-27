@@ -42,6 +42,18 @@ If(SOURCEPYTHON_ARCH STREQUAL "x86_64")
     # public/x64. Confirmed present at all four x86-64 pins.
     Set(SOURCEPYTHON_SDK_ARCH_DIR x64)
 Else()
+    # PYTHONSDK has to be set here as well, not only in the x86-64 branch. An
+    # earlier revision of this file replaced the unconditional
+    # "Set(PYTHONSDK ${THIRDPARTY_DIR}/python_win32)" with the x86-64 line and
+    # no counterpart here, which left PYTHONSDK undefined for 32-bit builds:
+    # PYTHONSDK_INCLUDE then expanded to a bare "/include", the real
+    # python_win32/include was never added to the include path, and the build
+    # failed with 97 instances of
+    #   error C1083: cannot open include file: 'pyconfig.h'
+    # from boost/python/detail/wrap_python.hpp. It is worth writing down because
+    # the x86-64 build was green throughout and nothing about the missing line
+    # points at 32-bit.
+    Set(PYTHONSDK            ${THIRDPARTY_DIR}/python_win32)
     Set(SOURCEPYTHON_MSVC_ARCH_DEFINE COMPILER_MSVC32)
     Set(SOURCEPYTHON_SDK_ARCH_DIR x86)
 EndIf()

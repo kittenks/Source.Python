@@ -82,12 +82,26 @@
   struct CallingConvention<R (CALLING_CONVENTION_CDECL *)(BOOST_PP_ENUM_PARAMS(NUM_ARGS, A) ...)>
     : boost::integral_constant<Convention_t, CONV_CDECL> {};
 
-  #ifdef _WIN32
-  // We only need to care about __stdcall on Windows
+  #if defined(_WIN32) && !defined(_M_X64) && !defined(_M_AMD64)
+  // We only need to care about __stdcall on Windows, and only on 32-bit.
+  //
+  // On x86-64 the MSVC compiler ignores __stdcall, __cdecl, __thiscall and
+  // __fastcall: they all name the same convention. So R (__stdcall *)(A) and
+  // R (__cdecl *)(A) are the *same type*, and the specialisation below becomes
+  // a re-specialisation of the one at the top of this block. MSVC rejects that
+  // with C2953 "class template already instantiated", once per arity per
+  // colliding form - 8,077 diagnostics for a single header.
+  //
+  // Omitting the specialisation is not a loss. On x86-64 there is no other
+  // convention to detect, so GetCallingConvention correctly reports CONV_CDECL
+  // for every signature, which is what the __cdecl specialisations above
+  // already do. The _M_X64 test is used rather than SOURCEPYTHON_X86_64
+  // because it is the compiler's own statement about the target and so holds
+  // however the build system is configured.
   template<typename R BOOST_PP_ENUM_TRAILING_PARAMS(NUM_ARGS, typename A)>
   struct CallingConvention<R (__stdcall *)(BOOST_PP_ENUM_PARAMS(NUM_ARGS, A))>
     : boost::integral_constant<Convention_t, CONV_STDCALL> {};
-  #endif // _WIN32
+  #endif // _WIN32 && !_M_X64
 
   // Handle class methods
   template<typename T, typename R BOOST_PP_ENUM_TRAILING_PARAMS(NUM_ARGS, typename A)>
@@ -107,8 +121,13 @@
   struct CallingConvention<R (CALLING_CONVENTION_CDECL T::*)(BOOST_PP_ENUM_PARAMS(NUM_ARGS, A) ...) const>
     : boost::integral_constant<Convention_t, CONV_CDECL> {};
 
-  #ifdef _WIN32
-  // We only need to care about __thiscall and __stdcall on Windows
+  #if defined(_WIN32) && !defined(_M_X64) && !defined(_M_AMD64)
+  // We only need to care about __thiscall and __stdcall on Windows, and only on
+  // 32-bit. On x86-64 __thiscall and __stdcall are ignored by the compiler, so
+  // these four forms collapse onto the four __cdecl member-function forms
+  // above and each one is a duplicate rather than a distinct specialisation.
+  // See the comment on the free-function block above for the full explanation;
+  // it is the same C2953 and the same cause.
   template<typename T, typename R BOOST_PP_ENUM_TRAILING_PARAMS(NUM_ARGS, typename A)>
   struct CallingConvention<R (__thiscall T::*)(BOOST_PP_ENUM_PARAMS(NUM_ARGS, A))>
     : boost::integral_constant<Convention_t, CONV_THISCALL> {};
@@ -124,5 +143,5 @@
   template<typename T, typename R BOOST_PP_ENUM_TRAILING_PARAMS(NUM_ARGS, typename A)>
   struct CallingConvention<R (__stdcall T::*)(BOOST_PP_ENUM_PARAMS(NUM_ARGS, A)) const>
     : boost::integral_constant<Convention_t, CONV_STDCALL> {};
-  #endif // _WIN32
+  #endif // _WIN32 && !_M_X64
 #endif // BOOST_PP_IS_ITERATING
