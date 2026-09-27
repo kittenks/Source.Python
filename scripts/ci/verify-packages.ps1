@@ -17,7 +17,16 @@ param(
     # 20.04 LTS -- costs nothing the engine could not already run on.
     # Only 64-bit objects are checked: the 32-bit natives legitimately sit at
     # 2.34, so a shared budget would turn the master pipeline red.
-    [version]$MaxGlibc64 = '2.31'
+    [version]$MaxGlibc64 = '2.31',
+    # Highest libstdc++ an x86-64 binary in the archive may require. This is a
+    # second, independent floor that the glibc check above cannot see: a
+    # statically linked C++ archive records no GLIBC_ versions at all, so it
+    # sails through the glibc gate and then fails at dlopen as
+    #   "undefined symbol: ...basic_string<...>::_M_replace_cold"
+    # 3.4.28 is what Ubuntu 20.04 LTS ships, which is the same baseline as
+    # $MaxGlibc64 and therefore the same host. It is also exactly what the
+    # engine's own 64-bit libraries need, so honouring it costs nothing.
+    [version]$MaxGlibcxx64 = '3.4.28'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -103,10 +112,44 @@ function Get-GlibcFloor {
     $highest
 }
 
+function Get-GlibcxxFloor {
+    param([byte[]]$Bytes)
+    $highest = $null
+    $text = [Text.Encoding]::ASCII.GetString($Bytes)
+    foreach ($match in [regex]::Matches($text, 'GLIBCXX_(\d+)\.(\d+)\.(\d+)')) {
+        $candidate = [version]::new(
+            [int]$match.Groups[1].Value,
+            [int]$match.Groups[2].Value,
+            [int]$match.Groups[3].Value)
+        if ($null -eq $highest -or $candidate -gt $highest) { $highest = $candidate }
+    }
+    $highest
+}
+
+# Symbol names that only exist in a newer runtime than the budget above allows,
+# with no version marker to detect them by.
+#
+# A binary can reference a symbol that only appeared in a later libc or
+# libstdc++ and pin no version for it whatsoever, so neither the glibc nor the
+# GLIBCXX check can see this class. Both entries below shipped that way and
+# both only surfaced as an "undefined symbol" at dlopen time on a real host:
+#
+#   _M_replace_cold   std::__cxx11::basic_string<...>::_M_replace_cold, a
+#                     libstdc++ internal no GCC 9 runtime exports. Came from
+#                     thirdparty/boost/lib/linux64/libboost_filesystem.a.
+#   __isoc23_         the C23 renaming of strtol et al., added in glibc 2.38.
+#                     Came from thirdparty/AsmJit/lib/linux64/libasmjit.a.
+#
+# The x86 copies of both libraries never referenced these, which is what made
+# it an x86-64-only failure. Matching on the prefix rather than the full symbol
+# catches the whole family, since glibc renamed these in one step.
+$forbiddenX64Symbols = @('_M_replace_cold', '__isoc23_')
+
 # Records the worst floor seen per archive and fails anything over budget. The
 # observed values are printed at the end either way, so a build that tightens
 # the floor is visible and a build that loosens it cannot pass quietly.
 $glibcObserved = @{}
+$glibcxxObserved = @{}
 
 function Test-GlibcFloor {
     param(
@@ -115,14 +158,33 @@ function Test-GlibcFloor {
         [byte[]]$Bytes
     )
     if ((Get-NativeFormat $Bytes) -ne 'elf64') { return }
-    $floor = Get-GlibcFloor $Bytes
     $label = Split-Path -Leaf $Archive
-    if ($null -eq $floor) { return }
-    if (-not $glibcObserved.ContainsKey($label) -or $floor -gt $glibcObserved[$label]) {
-        $glibcObserved[$label] = $floor
+    $text = [Text.Encoding]::ASCII.GetString($Bytes)
+
+    foreach ($symbol in $forbiddenX64Symbols) {
+        if ($text.Contains($symbol)) {
+            $failures.Add("$label`: $Relative references '$symbol', which no runtime at the supported floor provides")
+        }
     }
-    if ($floor -gt $MaxGlibc64) {
-        $failures.Add("$label`: $Relative requires GLIBC_$floor but the x86-64 budget is GLIBC_$MaxGlibc64")
+
+    $floor = Get-GlibcFloor $Bytes
+    if ($null -ne $floor) {
+        if (-not $glibcObserved.ContainsKey($label) -or $floor -gt $glibcObserved[$label]) {
+            $glibcObserved[$label] = $floor
+        }
+        if ($floor -gt $MaxGlibc64) {
+            $failures.Add("$label`: $Relative requires GLIBC_$floor but the x86-64 budget is GLIBC_$MaxGlibc64")
+        }
+    }
+
+    $cxx = Get-GlibcxxFloor $Bytes
+    if ($null -ne $cxx) {
+        if (-not $glibcxxObserved.ContainsKey($label) -or $cxx -gt $glibcxxObserved[$label]) {
+            $glibcxxObserved[$label] = $cxx
+        }
+        if ($cxx -gt $MaxGlibcxx64) {
+            $failures.Add("$label`: $Relative requires GLIBCXX_$cxx but the x86-64 budget is GLIBCXX_$MaxGlibcxx64")
+        }
     }
 }
 
@@ -322,6 +384,10 @@ if ($failures.Count -gt 0) {
 foreach ($label in ($glibcObserved.Keys | Sort-Object)) {
     Write-Host "  $label`: worst 64-bit glibc floor GLIBC_$($glibcObserved[$label]) (budget GLIBC_$MaxGlibc64)"
 }
+foreach ($label in ($glibcxxObserved.Keys | Sort-Object)) {
+    Write-Host "  $label`: worst 64-bit libstdc++ floor GLIBCXX_$($glibcxxObserved[$label]) (budget GLIBCXX_$MaxGlibcxx64)"
+}
+Write-Host "  forbidden-symbol check: $($forbiddenX64Symbols -join ', ')"
 
 $sourceCount = if ($SkipSourceArchive) { 0 } else { 1 }
 Write-Host "Verified $($expected.Count + $sourceCount) dated archives in $OutputDirectory"
