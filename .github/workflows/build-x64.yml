@@ -1,4 +1,4 @@
-name: Build Source.Python for Windows x86-64 (experimental)
+name: Build Source.Python for Windows x86-64
 
 # Dispatch-only Windows x86-64 pipeline for the four OrangeBox games whose
 # x86-64 CMake support exists and whose pinned HL2SDK revisions ship the
@@ -8,21 +8,22 @@ name: Build Source.Python for Windows x86-64 (experimental)
 # these four are the only choices.
 #
 # One manual run builds exactly ONE selected game - there is deliberately no
-# matrix - so the Windows x86-64 port can be validated game by game. The
-# workflow never starts on push or pull_request and never creates a release;
-# the only output is the native DLL artifact (core.dll + source-python.dll +
-# build-info.json), downloadable from this Actions run for 30 days.
+# matrix - so the Windows x86-64 port can be validated game by game. Choose
+# which artifacts to produce:
+#   * package_dll    - core.dll + source-python.dll (SP_HOOK_DIAG OFF)
+#   * package_stable - a full, clean, runnable game package with the x86-64
+#                      Python runtime and NO diagnostics/debug plugins/PDBs
+#   * package_test   - a runnable game package built with -DSP_HOOK_DIAG=ON and
+#                      bundled with the thirdparty-tools diagnostic plugins
+# The workflow never starts on push or pull_request and never creates a
+# release; artifacts are only downloadable from this Actions run.
 #
 # All compile-time third-party dependencies for Windows x86-64 are vendored in
-# the repository: the x64 CPython import libraries (thirdparty/python_win64),
-# the x64 Boost static libraries, the AsmJit/dyncall win64 libraries, and
-# DynamicHooks + HDE64 compiled from source. A clean runner therefore builds
-# the DLLs directly without building Boost or CPython first; this job doubles
-# as the clean-environment check that the vendored/from-source dependencies are
-# complete and self-contained. The redistributable x64 Python *runtime*
-# (python313.dll and the x64 .pyd extensions), which is needed only to assemble
-# a runnable game server package, is produced by the separate thirdparty-tools
-# repository workflow and is intentionally not part of this DLL build.
+# the repository, so a clean runner builds the DLLs directly. The
+# redistributable x86-64 Python *runtime* (python313.dll and the x64 .pyd
+# extensions) and the test-only diagnostic plugins come from the companion
+# repository kittenks/Source.Python-thirdparty-tools-Winx64, which is checked
+# out (read-only) by the packaging jobs.
 #
 # The 32-bit build-packages.yml pipeline is untouched, and this file exists
 # only on the spWinx64 branch.
@@ -45,6 +46,18 @@ on:
         required: false
         default: ''
         type: string
+      package_dll:
+        description: 'Produce the native DLL artifact (core.dll + source-python.dll, diagnostics OFF)'
+        type: boolean
+        default: true
+      package_stable:
+        description: 'Produce the clean stable game package (x86-64 runtime, no diagnostics)'
+        type: boolean
+        default: true
+      package_test:
+        description: 'Produce the diagnostic test game package (-HookDiag + debug plugins)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,8 +67,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-windows-x64:
-    name: Build ${{ inputs.branch }} Windows x86-64
+  # The release (SP_HOOK_DIAG OFF) core is shared by the DLL artifact and the
+  # stable game package, so build it once when either is requested.
+  build-release:
+    name: Build ${{ inputs.branch }} x86-64 (stable core)
+    if: ${{ inputs.package_dll || inputs.package_stable }}
     runs-on: windows-2022
     timeout-minutes: 120
     env:
@@ -95,45 +111,174 @@ jobs:
         shell: pwsh
         run: .\scripts\ci\fetch-hl2sdk.ps1 -Branch $env:SP_BRANCH -MirrorBase $env:SP_GITHUB_PROXY
 
-      - name: Configure and build Windows x86-64
+      - name: Configure and build Windows x86-64 (SP_HOOK_DIAG OFF)
         shell: pwsh
         run: .\scripts\ci\build-windows.ps1 -Branch $env:SP_BRANCH -Architecture x86_64
 
-      # build-windows.ps1 already asserts the PE machine type, but re-check the
-      # exact files uploaded and record their hashes next to the build metadata.
       - name: Verify the DLLs are x86-64 PE images
         shell: pwsh
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\native\$env:SP_BRANCH\windows-x86_64"
           foreach ($name in @('core.dll', 'source-python.dll')) {
             $path = Join-Path $directory $name
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "$name was not produced at '$path'."
-            }
-            $stream = [IO.File]::OpenRead($path)
-            try {
-              $reader = New-Object IO.BinaryReader($stream)
-              $stream.Position = 0x3C
-              $peOffset = $reader.ReadInt32()
-              $stream.Position = $peOffset + 4
-              $machine = $reader.ReadUInt16()
-            }
-            finally {
-              $stream.Dispose()
-            }
-            if ($machine -ne 0x8664) {
-              throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine
-            }
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$name was not produced at '$path'." }
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) { throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine }
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             Write-Host "$name x86-64 PE machine=0x{0:x} sha256=$hash" -f $machine
           }
-          Write-Host '--- build-info.json ---'
           Get-Content -LiteralPath (Join-Path $directory 'build-info.json')
 
-      - name: Upload the Windows x86-64 native DLL artifact
+      - name: Upload the native DLL artifact
         uses: actions/upload-artifact@v4
         with:
           name: native-win64-${{ inputs.branch }}
           path: artifacts/native/${{ inputs.branch }}/windows-x86_64
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+  # The diagnostic (SP_HOOK_DIAG ON) core, only for the test package.
+  build-diag:
+    name: Build ${{ inputs.branch }} x86-64 (diagnostic core)
+    if: ${{ inputs.package_test }}
+    runs-on: windows-2022
+    timeout-minutes: 120
+    env:
+      SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
+      SP_BRANCH: ${{ inputs.branch }}
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+
+      - name: Record checked-out source revision
+        shell: pwsh
+        run: |
+          $revision = (git rev-parse HEAD).Trim()
+          "SOURCEPYTHON_SOURCE_REVISION=$revision" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Verify Source.Python source fixes
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File ./scripts/ci/verify-fixes.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
+
+      - name: Fetch the pinned HL2SDK
+        shell: pwsh
+        run: .\scripts\ci\fetch-hl2sdk.ps1 -Branch $env:SP_BRANCH -MirrorBase $env:SP_GITHUB_PROXY
+
+      - name: Configure and build Windows x86-64 (SP_HOOK_DIAG ON)
+        shell: pwsh
+        run: .\scripts\ci\build-windows.ps1 -Branch $env:SP_BRANCH -Architecture x86_64 -HookDiag
+
+      - name: Verify the diagnostic DLLs are x86-64 PE images
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\native\$env:SP_BRANCH\windows-x86_64-diag"
+          foreach ($name in @('core.dll', 'source-python.dll')) {
+            $path = Join-Path $directory $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "$name was not produced at '$path'." }
+            $bytes = [IO.File]::ReadAllBytes($path)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) { throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine }
+          }
+          $info = Get-Content -LiteralPath (Join-Path $directory 'build-info.json') -Raw | ConvertFrom-Json
+          if (-not $info.hook_diag) { throw 'build-info.json reports hook_diag=false for the diagnostic build.' }
+          if (-not [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Join-Path $directory 'core.dll'))).Contains('first24')) {
+            throw 'Diagnostic core.dll is missing the DYNAMICHOOKS_DIAG "first24" output.'
+          }
+          Get-Content -LiteralPath (Join-Path $directory 'build-info.json')
+
+      - name: Upload the diagnostic native artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-win64-${{ inputs.branch }}-diag
+          path: artifacts/native/${{ inputs.branch }}/windows-x86_64-diag
+          if-no-files-found: error
+          retention-days: 90
+
+  package-stable:
+    name: Package ${{ inputs.branch }} stable game bundle
+    if: ${{ inputs.package_stable }}
+    needs: build-release
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+      - name: Check out the thirdparty-tools repository
+        uses: actions/checkout@v4
+        with:
+          repository: kittenks/Source.Python-thirdparty-tools-Winx64
+          ref: main
+          path: _tools
+          persist-credentials: false
+      - name: Download the stable native artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win64-${{ inputs.branch }}
+          path: artifacts/native/${{ inputs.branch }}/windows-x86_64
+      - name: Reproduce the x86-64 Python runtime
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File .\_tools\scripts\fetch-python-runtime.ps1
+      - name: Assemble the stable package
+        shell: pwsh
+        run: >-
+          pwsh -NoLogo -NoProfile -File .\scripts\ci\package-windows-x64.ps1
+          -Branch ${{ inputs.branch }} -Flavor stable
+          -RuntimeDirectory .\_tools\artifacts\python-runtime-win64
+      - name: Upload the stable game package
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-win64-${{ inputs.branch }}-stable
+          path: dist
+          if-no-files-found: error
+          retention-days: 90
+
+  package-test:
+    name: Package ${{ inputs.branch }} test (diagnostic) game bundle
+    if: ${{ inputs.package_test }}
+    needs: build-diag
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out Source.Python
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          ref: ${{ github.ref }}
+      - name: Check out the thirdparty-tools repository
+        uses: actions/checkout@v4
+        with:
+          repository: kittenks/Source.Python-thirdparty-tools-Winx64
+          ref: main
+          path: _tools
+          persist-credentials: false
+      - name: Download the diagnostic native artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win64-${{ inputs.branch }}-diag
+          path: artifacts/native/${{ inputs.branch }}/windows-x86_64-diag
+      - name: Reproduce the x86-64 Python runtime
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -File .\_tools\scripts\fetch-python-runtime.ps1
+      - name: Assemble the test package
+        shell: pwsh
+        run: >-
+          pwsh -NoLogo -NoProfile -File .\scripts\ci\package-windows-x64.ps1
+          -Branch ${{ inputs.branch }} -Flavor test
+          -RuntimeDirectory .\_tools\artifacts\python-runtime-win64
+          -DiagPluginsDirectory .\_tools\debug\server-plugins
+      - name: Upload the test game package
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-win64-${{ inputs.branch }}-test
+          path: dist
+          if-no-files-found: error
+          retention-days: 90

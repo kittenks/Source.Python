@@ -10,10 +10,20 @@ param(
     [string]$Generator = '',
 
     [ValidateSet('x86', 'x86_64')]
-    [string]$Architecture = 'x86'
+    [string]$Architecture = 'x86',
+
+    # x86_64 only: configure with -DSP_HOOK_DIAG=ON (defines DYNAMICHOOKS_DIAG=1)
+    # into a separate build/output directory, producing the diagnostic "test"
+    # core.dll. The default (stable) build leaves SP_HOOK_DIAG OFF. See
+    # docs/windows-x86_64.md for why this is a compile-time switch, not a cvar.
+    [switch]$HookDiag
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ($HookDiag -and $Architecture -ne 'x86_64') {
+    throw 'The -HookDiag switch is only supported for the x86_64 build.'
+}
 
 if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
     $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -22,15 +32,29 @@ $RepositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 & (Join-Path $PSScriptRoot 'verify-fixes.ps1') -RepositoryRoot $RepositoryRoot
 # Mirror the Linux layout: the x86 build keeps its historical path, and the
 # x86-64 build gets its own so the two architectures can coexist in artifacts.
+# The diagnostic x86-64 build gets a further "-diag" suffix so its CMake cache
+# never masks the stable configure (and vice versa).
 if ([string]::IsNullOrWhiteSpace($BuildDirectory)) {
-    $buildFolder = if ($Architecture -eq 'x86') { $Branch } else { "$Branch-$Architecture" }
+    $buildFolder = if ($Architecture -eq 'x86') {
+        $Branch
+    } elseif ($HookDiag) {
+        "$Branch-$Architecture-diag"
+    } else {
+        "$Branch-$Architecture"
+    }
     $BuildDirectory = Join-Path $RepositoryRoot "src\Builds\Windows\$buildFolder"
 }
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $RepositoryRoot 'artifacts\native'
 }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
-$platformFolder = if ($Architecture -eq 'x86') { 'windows' } else { "windows-$Architecture" }
+$platformFolder = if ($Architecture -eq 'x86') {
+    'windows'
+} elseif ($HookDiag) {
+    "windows-$Architecture-diag"
+} else {
+    "windows-$Architecture"
+}
 $nativeDirectory = Join-Path $OutputDirectory "$Branch\$platformFolder"
 $buildDirectory = [IO.Path]::GetFullPath($BuildDirectory)
 
@@ -108,8 +132,11 @@ Write-Host "Using CMake: $cmake"
 Write-Host "Using generator: $Generator"
 $vsPlatform = if ($Architecture -eq 'x86') { 'Win32' } else { 'x64' }
 Write-Host "Using platform: $vsPlatform ($Architecture)"
-& $cmake -S (Join-Path $RepositoryRoot 'src') -B $buildDirectory -G $Generator -A $vsPlatform `
-    "-DBRANCH=$Branch" "-DSOURCEPYTHON_ARCH=$Architecture"
+$diagState = if ($HookDiag) { 'ON (diagnostic test build)' } else { 'OFF (stable)' }
+Write-Host "SP_HOOK_DIAG: $diagState"
+$configureArguments = @("-DBRANCH=$Branch", "-DSOURCEPYTHON_ARCH=$Architecture")
+if ($HookDiag) { $configureArguments += '-DSP_HOOK_DIAG=ON' }
+& $cmake -S (Join-Path $RepositoryRoot 'src') -B $buildDirectory -G $Generator -A $vsPlatform @configureArguments
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE." }
 
 & $cmake --build $buildDirectory --config Release --parallel 2
@@ -135,6 +162,7 @@ $metadata = [ordered]@{
     game = $Branch
     platform = 'windows'
     architecture = $Architecture
+    hook_diag = [bool]$HookDiag
     vs_platform = $vsPlatform
     sdk_commit = $commit
     source_revision = $sourceRevision
@@ -144,4 +172,4 @@ $metadata = [ordered]@{
     built_at_utc = [DateTime]::UtcNow.ToString('o')
 }
 $metadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $nativeDirectory 'build-info.json') -Encoding UTF8
-Write-Host "Windows artifacts for $Branch are ready at $nativeDirectory"
+Write-Host "Windows artifacts for $Branch ($platformFolder) are ready at $nativeDirectory"
