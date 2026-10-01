@@ -1,26 +1,47 @@
-name: Build Source.Python x86-64 (experimental)
+name: Build Source.Python for Windows x86-64 (experimental)
 
-# Experimental x86-64 pipeline. It is dispatch-only on purpose: it must never
-# start a run by itself, and it does not exist on the master branch, so the
-# 32-bit build-packages pipeline keeps its own matrix and release gating.
-# Merge into build-packages.yml only once a game's x86-64 runtime is verified
-# on a real server.
+# Dispatch-only Windows x86-64 pipeline for the four OrangeBox games whose
+# x86-64 CMake support exists and whose pinned HL2SDK revisions ship the
+# public/x64 tier libraries: Counter-Strike: Source (css), Day of Defeat:
+# Source (dods), Half-Life 2: Deathmatch (hl2dm) and Team Fortress 2 (tf2).
+# src/CMakeLists.txt hard-fails x86_64 for every other branch, which is why
+# these four are the only choices.
+#
+# One manual run builds exactly ONE selected game - there is deliberately no
+# matrix - so the Windows x86-64 port can be validated game by game. The
+# workflow never starts on push or pull_request and never creates a release;
+# the only output is the native DLL artifact (core.dll + source-python.dll +
+# build-info.json), downloadable from this Actions run for 30 days.
+#
+# All compile-time third-party dependencies for Windows x86-64 are vendored in
+# the repository: the x64 CPython import libraries (thirdparty/python_win64),
+# the x64 Boost static libraries, the AsmJit/dyncall win64 libraries, and
+# DynamicHooks + HDE64 compiled from source. A clean runner therefore builds
+# the DLLs directly without building Boost or CPython first; this job doubles
+# as the clean-environment check that the vendored/from-source dependencies are
+# complete and self-contained. The redistributable x64 Python *runtime*
+# (python313.dll and the x64 .pyd extensions), which is needed only to assemble
+# a runnable game server package, is produced by the separate thirdparty-tools
+# repository workflow and is intentionally not part of this DLL build.
+#
+# The 32-bit build-packages.yml pipeline is untouched, and this file exists
+# only on the spWinx64 branch.
 
 on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Game branch to build for x86-64'
-        required: false
-        default: hl2dm
+        description: 'Game to build for Windows x86-64 (one game per run)'
+        required: true
+        default: css
         type: choice
         options:
-          - hl2dm
-          - tf2
           - css
           - dods
+          - hl2dm
+          - tf2
       github_proxy:
-        description: 'Optional public GitHub proxy, for example https://ghfast.top'
+        description: 'Optional public GitHub proxy for the HL2SDK download, for example https://ghfast.top'
         required: false
         default: ''
         type: string
@@ -29,27 +50,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: source-python-x64-${{ github.ref }}-${{ inputs.branch }}
+  group: source-python-win64-${{ github.ref }}-${{ inputs.branch }}
   cancel-in-progress: true
 
 jobs:
-  build-x64:
-    name: Build ${{ inputs.branch }} x86-64 (${{ matrix.target.platform }})
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        # Linux only for now. src/CMakeLists.txt hard-fails x86_64 unless the
-        # platform is UNIX and the branch is one of the games whose pinned
-        # HL2SDK revision carries lib/**/linux64/tier1.a, and the third-party
-        # trees carry lib/linux64 for boost, dyncall, DynamicHooks and AsmJit
-        # but no win64 counterpart. Add the windows-2022 target back once win64
-        # dependencies and a win64 CPython are in place; the -Architecture
-        # plumbing in build-windows.ps1 is already in place for that.
-        target:
-          - os: ubuntu-22.04
-            platform: linux
-    runs-on: ${{ matrix.target.os }}
+  build-windows-x64:
+    name: Build ${{ inputs.branch }} Windows x86-64
+    runs-on: windows-2022
+    timeout-minutes: 120
     env:
       SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
       SP_BRANCH: ${{ inputs.branch }}
@@ -66,136 +74,34 @@ jobs:
           $revision = (git rev-parse HEAD).Trim()
           "SOURCEPYTHON_SOURCE_REVISION=$revision" | Add-Content -LiteralPath $env:GITHUB_ENV
 
-      - name: Report the resolved SDK pin
+      - name: Show the resolved SDK pin
         shell: pwsh
         run: |
           $pins = Get-Content -LiteralPath ./scripts/ci/sdk-pins.json -Raw | ConvertFrom-Json
           $entry = $pins.PSObject.Properties[$env:SP_BRANCH].Value
-          "branch        : $env:SP_BRANCH"
-          "sdk commit    : $($entry.commit)"
-          "sdk_lib       : $($entry.sdk_lib)"
-          "sdk_lib_linux : $($entry.sdk_lib_linux)"
-          "sdk_lib_win64  : $($entry.sdk_lib_win64)"
-          "sdk_lib_linux64: $($entry.sdk_lib_linux64)"
+          "branch       : $env:SP_BRANCH"
+          "sdk commit   : $($entry.commit)"
+          "sdk_lib      : $($entry.sdk_lib)"
+          "sdk_lib_win64: $($entry.sdk_lib_win64)"
+          if ([string]::IsNullOrWhiteSpace([string]$entry.sdk_lib_win64)) {
+            throw "sdk-pins.json has no sdk_lib_win64 entry for '$env:SP_BRANCH'."
+          }
 
-      - name: Verify Source.Python fixes
+      - name: Verify Source.Python source fixes
         shell: pwsh
         run: pwsh -NoLogo -NoProfile -File ./scripts/ci/verify-fixes.ps1 -RepositoryRoot $env:GITHUB_WORKSPACE
 
-      - name: Verify shell script line endings
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          if grep -Il $'\r' src/Build.sh scripts/ci/*.sh; then
-            echo 'Shell scripts must use LF line endings.' >&2
-            exit 1
-          fi
-
-      # No gcc-multilib and no i386 architecture: this job links 64-bit objects
-      # only. The 32-bit runtime dependency check in build-packages.yml greps
-      # for libffi.so.7, which is the i386 SONAME and does not apply here.
-      - name: Install Linux x86-64 build dependencies
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake make binutils file unzip
-
-      - name: Fetch pinned HL2SDK (Windows)
-        if: runner.os == 'Windows'
+      - name: Fetch the pinned HL2SDK
         shell: pwsh
-        run: |
-          $mirror = $env:SP_GITHUB_PROXY
-          .\scripts\ci\fetch-hl2sdk.ps1 -Branch $env:SP_BRANCH -MirrorBase $mirror
+        run: .\scripts\ci\fetch-hl2sdk.ps1 -Branch $env:SP_BRANCH -MirrorBase $env:SP_GITHUB_PROXY
 
-      - name: Fetch pinned HL2SDK (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: bash ./scripts/ci/fetch-hl2sdk.sh "$SP_BRANCH"
-
-      - name: Build Windows x86-64
-        if: runner.os == 'Windows'
+      - name: Configure and build Windows x86-64
         shell: pwsh
         run: .\scripts\ci\build-windows.ps1 -Branch $env:SP_BRANCH -Architecture x86_64
 
-      - name: Build Linux x86-64
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          # Compiled inside an ubuntu:20.04 container on purpose. A binary can
-          # only require the glibc its toolchain could see, and the runtime floor
-          # this package promises is GLIBC_2.31 -- exactly what 20.04 ships.
-          # Building on the 22.04 host image produced a gamedll needing 2.34 and
-          # a core needing 2.35, neither of which loads on any LTS below 24.04.
-          # The pwsh steps stay on the host; only the compile moves. The
-          # workspace is mounted, so the HL2SDK fetched above and the artifacts
-          # written below are the same files the upload step expects.
-          #
-          # SP_BRANCH and GITHUB_SHA are passed through the environment rather
-          # than spliced into the single-quoted script body.
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/work" \
-            -w /work \
-            -e SP_BRANCH \
-            -e GITHUB_SHA \
-            -e DEBIAN_FRONTEND=noninteractive \
-            ubuntu:20.04 \
-            bash -euc '
-              apt-get update -qq
-              # python3 is not optional: build-linux.sh parses sdk-pins.json with
-              # it. file and unzip stay on the host, where the verification and
-              # listing steps that use them already run.
-              #
-              # The rest are for build-linux-x86_64-runtime.sh, which builds the
-              # third-party runtime rather than trusting the committed copies.
-              # See the step below for why that matters.
-              apt-get install -y -qq --no-install-recommends \
-                build-essential cmake make binutils python3 ca-certificates \
-                wget xz-utils bzip2 patchelf \
-                zlib1g-dev libffi-dev libbz2-dev libsqlite3-dev libssl-dev \
-                uuid-dev libreadline-dev liblzma-dev
-              echo "  gcc $(gcc -dumpversion), $(ldd --version | head -1)"
-              # The x86-64 third-party runtime: libpython, sqlite3, zlib,
-              # Boost.Python, Boost.Filesystem and AsmJit. Built here, in this
-              # container, and staged over the tree before compiling, so the
-              # build links what this toolchain can see rather than whatever
-              # binaries happen to be committed.
-              #
-              # The committed copies stay in the repository because a checkout
-              # has to build offline and the 32-bit pipeline still needs its own
-              # set. What this step removes is the ability for one of them to be
-              # wrong and still ship: the x86-64 build no longer reads them.
-              # They used to be built on a modern distro with no recipe, needed
-              # GLIBC_2.38, referenced _M_replace_cold and __isoc23_strtol, and
-              # nothing noticed until a real 64-bit host refused to load the
-              # addon three separate times.
-              bash ./scripts/ci/build-linux-x86_64-runtime.sh
-              bash ./scripts/ci/build-linux.sh \
-                "$SP_BRANCH" \
-                /work \
-                "/work/src/Builds/Linux/$SP_BRANCH-x86_64" \
-                /work/artifacts/native \
-                x86_64
-            '
-
-      # Report the glibc floor of what was just built, next to the budget the
-      # packaging job asserts. This makes a regression visible in the build log
-      # instead of only at the end of the pipeline. It warns rather than fails:
-      # the packaging job is the gate, and it names the offending file.
-      - name: Report the glibc floor of the built x86-64 objects
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          for f in "$GITHUB_WORKSPACE"/artifacts/native/*/linux-x86_64/*.so; do
-            [ -f "$f" ] || continue
-            floor=$(grep -aoE 'GLIBC_2\.[0-9]+' "$f" | sort -u -V | tail -1)
-            echo "  $(basename "$(dirname "$f")")/$(basename "$f"): ${floor:-none}"
-          done
-
-      # build-linux.sh already hard-fails on a non-ELF64 image; these re-check
-      # the exact pair of files that get uploaded and record their hashes.
-      - name: Verify Windows binaries are x86-64 PE images
-        if: runner.os == 'Windows'
+      # build-windows.ps1 already asserts the PE machine type, but re-check the
+      # exact files uploaded and record their hashes next to the build metadata.
+      - name: Verify the DLLs are x86-64 PE images
         shell: pwsh
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "artifacts\native\$env:SP_BRANCH\windows-x86_64"
@@ -224,193 +130,10 @@ jobs:
           Write-Host '--- build-info.json ---'
           Get-Content -LiteralPath (Join-Path $directory 'build-info.json')
 
-      - name: Verify Linux binaries are 64-bit ELF images
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          directory="artifacts/native/$SP_BRANCH/linux-x86_64"
-          for name in core.so source-python.so; do
-            test -f "$directory/$name"
-            description="$(file -b "$directory/$name")"
-            case "$description" in
-              *"ELF 64-bit"*) ;;
-              *) echo "$name is not a 64-bit ELF image: $description" >&2; exit 1 ;;
-            esac
-            echo "$name: $description"
-            readelf -h "$directory/$name" | grep -E 'Class:|Machine:'
-            sha256sum "$directory/$name"
-          done
-          echo '--- build-info.json ---'
-          cat "$directory/build-info.json"
-
-      # The 32-bit pipeline pins libffi.so.7, which is the i386 SONAME and does
-      # not apply here. Measured on the first green x86-64 run (36242813920),
-      # the 64-bit _ctypes links only libc: CPython's manylinux build links
-      # libffi statically. Asserted rather than reported, because an unresolved
-      # dependency here is a real packaging failure, not an informational fact.
-      #
-      # There is deliberately no fallback to the 32-bit lib-dynload directory.
-      # Both directories hold modules named _ctypes.cpython-313-x86_64-linux-gnu.so
-      # -- that tag is the 32-bit libpython's own SOABI, verified by extracting
-      # the string from plat-linux/libpython3.13.so.1.0 -- so the filename alone
-      # cannot tell the architectures apart. Only the ELF header can. The two
-      # directories were checked directly: lib-dynload/_ctypes is ELF32 EM_386
-      # and lib-dynload-linux64/_ctypes is ELF64 EM_X86_64. Falling back would
-      # therefore ldd a 32-bit image here, and the missing-dependency check
-      # would pass while proving nothing about the 64-bit runtime.
-      - name: Verify x86-64 runtime dependencies resolve
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          set -euo pipefail
-          dynload="addons/source-python/Python3/lib-dynload-linux64"
-          if [ ! -d "$dynload" ]; then
-            echo "Missing the x86-64 extension module directory: $dynload" >&2
-            exit 1
-          fi
-          ctypes_module="$(find "$dynload" -maxdepth 1 -name '_ctypes*.so' -print -quit)"
-          echo "dynload dir : $dynload"
-          if [ -z "$ctypes_module" ]; then
-            echo "No _ctypes module found in $dynload; the runtime is incomplete." >&2
-            exit 1
-          fi
-          echo "module      : $ctypes_module"
-          file -b "$ctypes_module" | sed 's/^/  /'
-          if ! readelf -h "$ctypes_module" | grep -q 'Class:.*ELF64'; then
-            echo "$ctypes_module is not an ELF64 image; this is the wrong architecture." >&2
-            exit 1
-          fi
-          LD_LIBRARY_PATH="$PWD/addons/source-python/Python3/plat-linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-            ldd "$ctypes_module" | tee /tmp/source-python-x64-ctypes-ldd.txt
-          if grep -qi 'not found' /tmp/source-python-x64-ctypes-ldd.txt; then
-            echo 'x86-64 _ctypes has unresolved shared library dependencies.' >&2
-            exit 1
-          fi
-          echo 'All x86-64 _ctypes dependencies resolved.'
-
-      - name: List the packaged x86-64 Python runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          # No pipe into head here. The runner invokes this script as
-          # `bash -e -o pipefail` regardless of the `set` line, so `ls | head`
-          # makes ls die on SIGPIPE once head has read enough, and -e turns
-          # that into a step failure. Whether it happens depends on how the
-          # listing splits across head's buffer, which is why it looks flaky:
-          # runs 36246268853 (css) and 36246273214 (dods) failed on this while
-          # 36246264297 (tf2) passed with identical content. Bound the listing
-          # with ls's own head option instead, which cannot signal a pipe.
-          for dir in addons/source-python/Python3/plat-linux64 addons/source-python/Python3/lib-dynload-linux64; do
-            echo "=== $dir ==="
-            if [ -d "$dir" ]; then
-              ls -la --time-style=long-iso -lh "$dir"
-            else
-              echo "(missing)"
-            fi
-          done
-
-      - name: Upload x86-64 native binaries
+      - name: Upload the Windows x86-64 native DLL artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-x64-${{ inputs.branch }}-${{ matrix.target.platform }}
-          path: artifacts/native
-          if-no-files-found: error
-          retention-days: 30
-
-  package-x64:
-    name: Package and verify the ${{ inputs.branch }} x86-64 archive
-    needs: build-x64
-    # windows-2022 because package.ps1 and verify-packages.ps1 use tar.exe, which
-    # only exists on the Windows runner. The x86-64 binaries themselves are built
-    # on ubuntu; this job only packs and checks them.
-    runs-on: windows-2022
-    env:
-      # Job-scoped, so it has to be restated here: the build job's SP_BRANCH does
-      # not carry across a job boundary.
-      SP_BRANCH: ${{ inputs.branch }}
-    steps:
-      - name: Check out Source.Python
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          ref: ${{ github.ref }}
-
-      - name: Pin the build date
-        shell: pwsh
-        run: |
-          # Both scripts default to the current date independently, so a run that
-          # crosses midnight between packaging and verification would look for an
-          # archive name that was never written. Pin it once and share it.
-          $date = [DateTime]::Now.ToString('yyyy-MMdd')
-          "SOURCEPYTHON_BUILD_DATE=$date" | Add-Content -LiteralPath $env:GITHUB_ENV
-          "build date: $date"
-
-      - name: Download the x86-64 native binaries
-        uses: actions/download-artifact@v4
-        with:
-          # Name the artifact outright rather than using pattern: native-*. The
-          # build job names it with matrix.target.platform, which is plain
-          # "linux" even though the binaries inside are x86-64, so the token here
-          # has to match that and not the linux-x86_64 directory name.
-          name: native-x64-${{ inputs.branch }}-linux
-          path: artifacts/native
-
-      - name: Assemble the x86-64 archive
-        shell: pwsh
-        run: |
-          .\scripts\ci\package.ps1 `
-            -RepositoryRoot $env:GITHUB_WORKSPACE `
-            -NativeRoot (Join-Path $env:GITHUB_WORKSPACE 'artifacts\native') `
-            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
-            -Branches $env:SP_BRANCH `
-            -RequiredPlatforms @('linux-x86_64')
-
-      - name: Verify the assembled archive
-        shell: pwsh
-        run: |
-          # This is where the new architecture assertion runs: it reads the ELF
-          # class out of the packaged core.so and fails if it is not ELF64, so an
-          # x86-32 artifact cannot ship inside an archive labelled x86-64.
-          #
-          # -MaxGlibc64 is the glibc floor this archive promises to load on.
-          # 2.31 is Ubuntu 20.04 LTS: the oldest LTS still supported, the
-          # manylinux_2_31 baseline, and one below what the engine itself needs
-          # (Valve's 64-bit libraries stop at GLIBC_2.29). A binary built
-          # against an older glibc also runs on every newer distribution, so
-          # this single value covers the whole supported range rather than
-          # trading one end for the other.
-          #
-          # The measured floors, and what the assertion is protecting:
-          #
-          #   addons/source-python.so                              GLIBC_2.29
-          #   addons/source-python/bin/core.so                    GLIBC_2.30
-          #   Python3/plat-linux64/libpython3.13.so.1.0           GLIBC_2.30
-          #   Python3/plat-linux64/libsqlite3.so.0                GLIBC_2.29
-          #   Python3/lib-dynload-linux64/*.so (68)   worst       GLIBC_2.29
-          #
-          # All of those come from building inside an ubuntu:20.04 container;
-          # see scripts/ci/build-linux-x86_64-runtime.sh, which also keeps the
-          # committed prebuilts from drifting back onto a newer toolchain. That
-          # script is the reason this value is enforceable: the prebuilts used
-          # to be committed with no record of how they were built, needed
-          # GLIBC_2.38, and nothing noticed until a real 64-bit host refused to
-          # load the addon.
-          #
-          # The x86 pipeline is unaffected: its natives are ELF32, and the
-          # plat-linux64/ copy in a 32-bit archive is never dlopen'd.
-          .\scripts\ci\verify-packages.ps1 `
-            -RepositoryRoot $env:GITHUB_WORKSPACE `
-            -OutputDirectory (Join-Path $env:GITHUB_WORKSPACE 'dist') `
-            -Branches $env:SP_BRANCH `
-            -RequiredPlatforms @('linux-x86_64') `
-            -MaxGlibc64 '2.31' `
-            -SkipSourceArchive
-
-      - name: Upload the x86-64 archive
-        uses: actions/upload-artifact@v4
-        with:
-          name: source-python-x64-${{ inputs.branch }}
-          path: dist/*
+          name: native-win64-${{ inputs.branch }}
+          path: artifacts/native/${{ inputs.branch }}/windows-x86_64
           if-no-files-found: error
           retention-days: 30
