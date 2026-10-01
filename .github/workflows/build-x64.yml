@@ -131,9 +131,9 @@ jobs:
             $bytes = [IO.File]::ReadAllBytes($path)
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
             $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            if ($machine -ne 0x8664) { throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine }
+            if ($machine -ne 0x8664) { throw ("$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine) }
             $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-            Write-Host "$name x86-64 PE machine=0x{0:x} sha256=$hash" -f $machine
+            Write-Host ("$name x86-64 PE machine=0x{0:x} sha256=$hash" -f $machine)
           }
           Get-Content -LiteralPath (Join-Path $directory 'build-info.json')
 
@@ -195,7 +195,7 @@ jobs:
             $bytes = [IO.File]::ReadAllBytes($path)
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
             $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-            if ($machine -ne 0x8664) { throw "$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine }
+            if ($machine -ne 0x8664) { throw ("$name is not an x86-64 PE image (machine 0x{0:x})." -f $machine) }
           }
           $info = Get-Content -LiteralPath (Join-Path $directory 'build-info.json') -Raw | ConvertFrom-Json
           if (-not $info.hook_diag) { throw 'build-info.json reports hook_diag=false for the diagnostic build.' }
