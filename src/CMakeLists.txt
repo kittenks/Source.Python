@@ -375,6 +375,7 @@ Set(SOURCEPYTHON_MATHLIB_MODULE_SOURCES
 # Memory module
 # ------------------------------------------------------------------
 Set(SOURCEPYTHON_MEMORY_MODULE_HEADERS
+    core/modules/memory/memory_addr.h
     core/modules/memory/memory_alloc.h
     core/modules/memory/memory_calling_convention.h
     core/modules/memory/memory_function.h

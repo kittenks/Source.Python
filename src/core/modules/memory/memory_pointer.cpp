@@ -86,7 +86,7 @@ inline int align(int value, int alignment)
 // ============================================================================
 // >> CPointer
 // ============================================================================
-CPointer::CPointer(unsigned long ulAddr /* = 0 */, bool bAutoDealloc /* false */)
+CPointer::CPointer(Addr_t ulAddr /* = 0 */, bool bAutoDealloc /* false */)
 {
 	m_ulAddr = ulAddr;
 	m_bAutoDealloc = bAutoDealloc;
@@ -115,10 +115,10 @@ CPointer* CPointer::GetPtr(int iOffset /* = 0 */)
 	return new CPointer(GetPtrHelper(m_ulAddr + iOffset));
 }
 
-void SetPtrHelper(unsigned long addr, unsigned long ptr)
+void SetPtrHelper(Addr_t addr, Addr_t ptr)
 {
 	TRY_SEGV()
-		*(unsigned long *) addr = ptr;
+		*(Addr_t *) addr = ptr;
 	EXCEPT_SEGV()
 }
 
@@ -144,7 +144,7 @@ int CPointer::Compare(object oOther, unsigned long ulNum)
 
 bool CPointer::IsOverlapping(object oOther, unsigned long ulNumBytes)
 {
-	unsigned long ulOther = ExtractAddress(oOther);
+	Addr_t ulOther = ExtractAddress(oOther);
 	if (m_ulAddr <= ulOther)
 		return m_ulAddr + ulNumBytes > ulOther;
 
@@ -188,7 +188,7 @@ CPointer* CPointer::SearchBytes(object oBytes, unsigned long ulNumBytes)
 	if (!bytes)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Failed to read the given signature.");
 
-	return new CPointer((unsigned long) SearchBytesHelper(base, end, bytes, iByteLen));
+	return new CPointer((Addr_t) SearchBytesHelper(base, end, bytes, iByteLen));
 }
 
 void CopyHelper(void* dest, void* source, unsigned long length)
@@ -228,14 +228,14 @@ void CPointer::Move(object oDest, unsigned long ulNumBytes)
 	MoveHelper((void *) ExtractAddress(oDest, true), (void *) m_ulAddr, ulNumBytes);
 }
 
-unsigned long GetVirtualFuncHelper(unsigned long addr, int index)
+Addr_t GetVirtualFuncHelper(Addr_t addr, int index)
 {
 	TRY_SEGV()
 		void** vtable = *(void ***) addr;
 		if (!vtable)
 			BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Failed to get the virtual function table.")
 
-		return (unsigned long) vtable[index];
+		return (Addr_t) vtable[index];
 	EXCEPT_SEGV()
 	return 0;
 }
@@ -248,7 +248,7 @@ CPointer* CPointer::GetVirtualFunc(int iIndex)
 
 CPointer* CPointer::Realloc(int iSize)
 { 
-	return new CPointer((unsigned long) UTIL_Realloc((void *) m_ulAddr, iSize)); 
+	return new CPointer((Addr_t) UTIL_Realloc((void *) m_ulAddr, iSize)); 
 }
 
 CFunction* CPointer::MakeFunction(CFunctionInfo& info)
@@ -361,7 +361,7 @@ void CPointer::SetProtection(Protection_t prot, int size)
 	DWORD old_protect;
 	if (!VirtualProtect((void *) m_ulAddr, size, GetProtection(prot), &old_protect))
 #elif __linux__
-	unsigned long addr = (unsigned long) ALIGN_PAGE(m_ulAddr);
+	Addr_t addr = (Addr_t) ALIGN_PAGE(m_ulAddr);
 	if (mprotect((void*) addr, align(size + m_ulAddr - addr, PAGE_SIZE), GetProtection(prot)) != 0)
 #else
 	#error Unsupported platform.

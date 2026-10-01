@@ -424,7 +424,7 @@ struct void_ptr_to_python
 
 	static PyObject* convert(void* pPtr)
 	{
-		return incref(object(CPointer((unsigned long) pPtr)).ptr());
+		return incref(object(CPointer((Addr_t) pPtr)).ptr());
 	}
 };
 
@@ -455,7 +455,7 @@ struct unsigned_char_ptr_to_python
 
 	static PyObject* convert(unsigned char* pPtr)
 	{
-		return incref(object(CPointer((unsigned long) pPtr)).ptr());
+		return incref(object(CPointer((Addr_t) pPtr)).ptr());
 	}
 };
 

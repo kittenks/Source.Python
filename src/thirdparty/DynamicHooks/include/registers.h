@@ -142,7 +142,7 @@ enum Register_t
 	ST6,
 	ST7,
 
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) && defined(__x86_64__)) || defined(DYNAMICHOOKS_X86_64)
 	// Keep every x86 value above stable. 64-bit-only values are appended so
 	// existing users do not observe renumbered registers.
 	SPL,
@@ -344,7 +344,7 @@ public:
 	CRegister* m_st6;
 	CRegister* m_st7;
 
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) && defined(__x86_64__)) || defined(DYNAMICHOOKS_X86_64)
 	// Appended to preserve the offsets of every legacy x86 member.
 	CRegister* m_spl;
 	CRegister* m_bpl;

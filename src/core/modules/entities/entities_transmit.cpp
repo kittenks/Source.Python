@@ -30,6 +30,7 @@
 // Source.Python
 #include "modules/entities/entities_transmit.h"
 #include "modules/memory/memory_function_info.h"
+#include "modules/memory/memory_hooks.h"
 #include "utilities/conversions.h"
 #include "modules/players/players_entity.h"
 
@@ -123,7 +124,7 @@ void CTransmitManager::Initialize()
 			"Failed to retrieve CheckTransmit's info."
 		)
 
-	CFunction *pFunc = CPointer((unsigned long)((void *)gameents)).MakeVirtualFunction(*pInfo);
+	CFunction *pFunc = CPointer((Addr_t)((void *)gameents)).MakeVirtualFunction(*pInfo);
 	delete pInfo;
 
 	if (!pFunc || !pFunc->IsHookable())
@@ -144,6 +145,14 @@ void CTransmitManager::Initialize()
 				"Failed to hook CheckTransmit."
 			)
 		}
+
+		// Ownership hand-off to the hook. The pFunc below is deleted
+		// immediately, and ~CFunction frees its convention unless m_bHooked
+		// says the hook has taken it. See HookFunctionHelper in
+		// memory_function.cpp for the whole protocol; this call site bypasses
+		// that helper, so it has to do the hand-off itself.
+		if (pFunc->m_pCallingConvention)
+			pFunc->m_pCallingConvention->m_bHooked = true;
 	}
 
 	delete pFunc;

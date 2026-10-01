@@ -256,7 +256,7 @@ void SendPropVariantExt::set_int(DVariant* pVariant, int iValue)
 
 CPointer* SendPropVariantExt::get_data(DVariant *pVariant)
 {
-	return new CPointer((unsigned long)get_typed_value<DPT_DataTable, void *, &DVariant::m_pData>(pVariant));
+	return new CPointer((Addr_t)get_typed_value<DPT_DataTable, void *, &DVariant::m_pData>(pVariant));
 }
 
 void SendPropVariantExt::set_data(DVariant *pVariant, CPointer *pData)

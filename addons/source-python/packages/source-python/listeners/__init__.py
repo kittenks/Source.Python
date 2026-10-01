@@ -697,19 +697,40 @@ else:
 try:
     _hibernation_function = get_virtual_function(
         server_game_dll, _hibernation_function_name)
-    _hibernation_hook = PreHook(_hibernation_function)
-except (OSError, ValueError) as error:
-    from warnings import warn
-    warn('Unable to install the hibernation hook: {0}'.format(error))
-else:
-    @_hibernation_hook
+
+    # The decoration has to happen inside this try rather than in an else branch
+    # after it. PreHook.__call__ runs the add_hook that actually drives
+    # DynamicHooks, so applying the hook outside the try lets a detour failure
+    # escape uncaught and take the whole main module down with it.
+    #
+    # This used to be masked. get_virtual_function failed first on Windows x86-64,
+    # because the vtable-offset extractor only understood 32-bit x86 thunks and so
+    # reported every virtual function as non-virtual; that failure was inside the
+    # try and produced the intended warning. Once the extractor was fixed the
+    # failure moved to add_hook, which sits outside, and the warning this block
+    # exists to emit stopped being emitted.
+    #
+    # The value DynamicHooks raises for this is std::invalid_argument, which
+    # Boost.Python surfaces as ValueError - already handled below.
+    @PreHook(_hibernation_function)
     def _pre_hibernation_function(stack_data):
         """Called when the server is hibernating."""
+        # The single boolean argument is bHibernating: True when the engine is
+        # entering hibernation and False when it wakes up. Only disconnect bots
+        # on the way into hibernation, never on the wake-up call.
         if not stack_data[1]:
             return
 
         # Disconnect all bots...
         _disconnect_bots()
+except Exception as error:
+    # Catch every failure DynamicHooks/Boost.Python can raise while installing
+    # the detour: std::invalid_argument surfaces as ValueError, while a failed
+    # trampoline/near-relay allocation (common for very short functions loaded
+    # at a high base address on x86-64) surfaces as RuntimeError. Catching only
+    # (OSError, ValueError) here used to let RuntimeError abort the whole module.
+    from warnings import warn
+    warn('Unable to install the hibernation hook: {0}'.format(error))
 
 
 @OnLevelEnd
@@ -724,6 +745,8 @@ def _disconnect_bots():
     # Cyclic import...
     from filters.players import PlayerIter
 
+    bots = list(PlayerIter('bot'))
+
     # Notify OnClientDisconnect listener for all bots...
-    for bot in PlayerIter('bot'):
+    for bot in bots:
         on_client_disconnect_listener_manager.notify(bot.index)

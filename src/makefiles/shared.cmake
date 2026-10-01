@@ -54,6 +54,13 @@ Set(DYNAMICHOOKSSDK_INCLUDE   ${DYNAMICHOOKSSDK}/include)
 Set(DYNAMICHOOKSSDK_LIB       ${DYNAMICHOOKSSDK}/lib)
 
 # ------------------------------------------------------------------
+# HDE64 specific.
+# HDE64 is the length-disassembler used by the DynamicHooks x64 backend
+# (hook_x64.cpp includes "thirdparty/HDE64/hde64.h"). It is a small C library.
+# ------------------------------------------------------------------
+Set(HDE64SDK                  ${THIRDPARTY_DIR}/HDE64)
+
+# ------------------------------------------------------------------
 # Include directories
 # ------------------------------------------------------------------
 Include_Directories(

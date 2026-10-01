@@ -82,7 +82,7 @@ extern IVEngineServer* engine;
 //-----------------------------------------------------------------------------
 // BinaryFile class
 //-----------------------------------------------------------------------------
-CBinaryFile::CBinaryFile(unsigned long ulModule, unsigned long ulBase, unsigned long ulSize)
+CBinaryFile::CBinaryFile(Addr_t ulModule, Addr_t ulBase, unsigned long ulSize)
 {
 	m_ulModule = ulModule;
 	m_ulBase = ulBase;
@@ -114,14 +114,14 @@ CPointer* CBinaryFile::FindSignatureRaw(object oSignature)
 
 		if (i == iLength)
 		{
-			return new CPointer((unsigned long) base);
+			return new CPointer((Addr_t) base);
 		}
 		base++;
 	}
 	return new CPointer();
 }
 
-void CBinaryFile::AddSignatureToCache(unsigned char* sigstr, int iLength, unsigned int ulAddr)
+void CBinaryFile::AddSignatureToCache(unsigned char* sigstr, int iLength, Addr_t ulAddr)
 {
 	Signature_t sig_t = {new unsigned char[iLength+1], ulAddr};
 	strcpy((char*) sig_t.m_szSignature, (char*) sigstr);
@@ -236,13 +236,13 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 	if (!pAddr)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Could not find symbol: %s", szSymbol)
 
-	return new CPointer((unsigned long) pAddr);
+	return new CPointer((Addr_t) pAddr);
 
 #elif defined(__linux__)
 	dlerror();
 	void* pResult = dlsym((void*) m_ulModule, szSymbol);
 	if (!dlerror())
-		return new CPointer((unsigned long) pResult);
+		return new CPointer((Addr_t) pResult);
 
 	// -----------------------------------------
 	// We need to use mmap now that VALVe has
@@ -340,18 +340,57 @@ CPointer* CBinaryFile::FindSymbol(char* szSymbol)
 	if (!pResult)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Could not find symbol: %s", szSymbol)
 
-	return new CPointer((unsigned long) pResult);
+	return new CPointer((Addr_t) pResult);
 #else
 #error "BinaryFile::FindSymbol() is not implemented on this OS"
 #endif
 }
 
-CPointer* CBinaryFile::FindPointer(object oIdentifier, int iOffset, unsigned int iLevel)
+CPointer* CBinaryFile::FindPointer(object oIdentifier, int iOffset, unsigned int iLevel, int iRipOffset)
 {
 	CPointer* ptr = FindAddress(oIdentifier);
 	if (ptr->IsValid())
 	{
-		ptr->m_ulAddr += iOffset;
+		if (iRipOffset >= 0)
+		{
+			// x86-64 RIP-relative form. On this ABI a global's address is nearly
+			// always reached through `lea reg, [rip+disp32]`, where the encoded
+			// field is a displacement rather than the address itself: 24,651 such
+			// references against 1 absolute `mov reg, imm64` in the x64 TF2
+			// server.dll. Reading the field therefore yields a number that is
+			// meaningless on its own, and the only way to turn it back into an
+			// address is to add the address of the end of the field. That is what
+			// this branch does; the previous scheme had no way to express it.
+			ptr->m_ulAddr += iRipOffset;
+			Addr_t ulField = ptr->m_ulAddr;
+
+			// Refuse to read the field if it is not inside the loaded image. A
+			// wrong rip_offset would otherwise turn into an arbitrary read, and
+			// the resulting garbage pointer would surface much later as a crash
+			// with no indication of the cause.
+			if (ulField + sizeof(int) > m_ulBase + m_ulSize)
+				BOOST_RAISE_EXCEPTION(PyExc_ValueError,
+					"The RIP-relative displacement field is outside the binary. "
+					"The signature was probably found, but rip_offset is wrong.");
+
+			int iDisplacement = *(int *) (ulField);
+			ptr->m_ulAddr = ulField + sizeof(int) + iDisplacement;
+
+			// Not a hard error: a global may legitimately live in another module.
+			// But a target outside this binary almost always means rip_offset is
+			// off by a few bytes, and that is worth saying out loud in the log.
+			if (ptr->m_ulAddr < m_ulBase || ptr->m_ulAddr >= m_ulBase + m_ulSize)
+				PythonLog(4, "Warning: the RIP-relative target 0x%llX is outside "
+					"this binary (0x%llX..0x%llX). Check rip_offset.",
+					(unsigned long long) ptr->m_ulAddr,
+					(unsigned long long) m_ulBase,
+					(unsigned long long) (m_ulBase + m_ulSize));
+		}
+		else
+		{
+			ptr->m_ulAddr += iOffset;
+		}
+
 		while (iLevel > 0)
 		{
 			ptr->m_ulAddr = GetPtrHelper(ptr->m_ulAddr);
@@ -397,7 +436,7 @@ dict CBinaryFile::GetSymbols()
 		const char* name = (const char*) (m_ulModule + symbols[i]);
 
 		// TODO: Don't use GetProcAddress. There is probably a faster way
-		result[name] = CPointer((unsigned long) GetProcAddress((HMODULE) m_ulModule, name));
+		result[name] = CPointer((Addr_t) GetProcAddress((HMODULE) m_ulModule, name));
 	}
 #elif __linux__
 	// TODO: Remove duplicated code. See also: FindSymbol()
@@ -478,7 +517,7 @@ dict CBinaryFile::GetSymbols()
 		if (sym.st_shndx == SHN_UNDEF || (sym_type != STT_FUNC && sym_type != STT_OBJECT))
 			continue;
 
-		result[sym_name] = CPointer((unsigned long)(dlmap->l_addr + sym.st_value));
+		result[sym_name] = CPointer((Addr_t)(dlmap->l_addr + sym.st_value));
 	}
 
 	// Unmap the file now.
@@ -516,8 +555,8 @@ CBinaryFile* CBinaryManager::FindBinary(char* szPath, bool bSrvCheck /* = true *
 	}
 #endif
 
-	unsigned long ulModule = (unsigned long) dlLoadLibrary(szBinaryPath.data());
-	unsigned long ulBase = 0;
+	Addr_t ulModule = (Addr_t) dlLoadLibrary(szBinaryPath.data());
+	Addr_t ulBase = 0;
 #ifdef __linux__
 	if (!ulModule)
 	{
@@ -527,7 +566,7 @@ CBinaryFile* CBinaryManager::FindBinary(char* szPath, bool bSrvCheck /* = true *
 		// If the previous path failed, try the "bin" folder of the game.
 		// This will allow passing e.g. "server" to this function.
 		szBinaryPath = std::string(szGameDir) + "/bin/" + szBinaryPath;
-		ulModule = (unsigned long) dlLoadLibrary(szBinaryPath.data());
+		ulModule = (Addr_t) dlLoadLibrary(szBinaryPath.data());
 
 #ifdef SOURCEPYTHON_X86_64
 		// A 64-bit Source install keeps its engine modules in a
@@ -548,9 +587,56 @@ CBinaryFile* CBinaryManager::FindBinary(char* szPath, bool bSrvCheck /* = true *
 			szName = (nSlash == std::string::npos) ? szName : szName.substr(nSlash + 1);
 
 			szBinaryPath = std::string(szGameDir) + "/bin/linux64/" + szName;
-			ulModule = (unsigned long) dlLoadLibrary(szBinaryPath.data());
+			ulModule = (Addr_t) dlLoadLibrary(szBinaryPath.data());
 		}
 #endif
+	}
+#endif
+
+#ifdef _WIN32
+	// A 64-bit Source install keeps its engine modules in a per-architecture
+	// subdirectory, exactly the way a 64-bit Linux install uses bin/linux64/:
+	// a TF2 x86-64 dedicated server has tf/bin/x64/server.dll and no
+	// tf/bin/x64/server_srv.dll equivalent. A 32-bit install has the flat
+	// tf/bin/server.dll.
+	//
+	// The bare name attempted above cannot be relied on to find either.
+	// LoadLibrary's search order is the application directory, the system
+	// directories, the Windows directory, the current directory and PATH -
+	// and the game's bin directory is none of those. The executable lives in
+	// the directory above the game directory, so "server" resolves to nothing
+	// and dlLoadLibrary returns NULL. This is the Windows counterpart of the
+	// bin/ and bin/linux64/ attempts in the __linux__ block above; without it
+	// every signature scan fails with "Unable to find server.dll", which is
+	// what the first Windows x64 runtime test reported.
+	//
+	// x64 is tried before the flat bin/ on purpose. A 64-bit install still
+	// carries the 32-bit copy at tf/bin/server.dll next to the 64-bit one at
+	// tf/bin/x64/server.dll, so probing bin/ first would only work by relying
+	// on that load failing with ERROR_BAD_EXE_FORMAT.
+	if (!ulModule) {
+		char szGameDir[MAX_PATH_LENGTH];
+		engine->GetGameDir(szGameDir, MAX_PATH_LENGTH);
+
+		// Reduce whatever we were handed to a bare file name, so a caller that
+		// passed a path does not get the game directory glued onto the front of
+		// it a second time.
+		std::string szName(szBinaryPath);
+		std::string::size_type nSlash = szName.find_last_of("/\\");
+		if (nSlash != std::string::npos)
+			szName = szName.substr(nSlash + 1);
+
+		if (bCheckExtension && !str_ends_with(szName.c_str(), ".dll"))
+			szName += ".dll";
+
+#ifdef _M_X64
+		szBinaryPath = std::string(szGameDir) + "/bin/x64/" + szName;
+		ulModule = (Addr_t) dlLoadLibrary(szBinaryPath.c_str());
+#endif
+		if (!ulModule) {
+			szBinaryPath = std::string(szGameDir) + "/bin/" + szName;
+			ulModule = (Addr_t) dlLoadLibrary(szBinaryPath.c_str());
+		}
 	}
 #endif
 
@@ -581,6 +667,25 @@ CBinaryFile* CBinaryManager::FindBinary(char* szPath, bool bSrvCheck /* = true *
 #ifdef _WIN32
 	IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER *) ulModule;
 	IMAGE_NT_HEADERS* nt  = (IMAGE_NT_HEADERS *) ((BYTE *) dos + dos->e_lfanew);
+
+	/* Reject a binary for the other architecture before interpreting headers.
+	 * A 64-bit install keeps the 32-bit copy alongside the 64-bit one, so a
+	 * misdirected path can hand back a PE that is a perfectly valid image but
+	 * whose optional header has 32-bit fields where this code reads 64-bit
+	 * ones. This mirrors the ELF class/machine check in the __linux__ branch
+	 * below, and it has to come before SizeOfImage is used. */
+#if defined(_M_X64) || defined(_M_AMD64)
+	const unsigned short expectedMachine = IMAGE_FILE_MACHINE_AMD64;
+#elif defined(_M_IX86)
+	const unsigned short expectedMachine = IMAGE_FILE_MACHINE_I386;
+#else
+	#error "FindBinary() has no expected PE machine type for this architecture"
+#endif
+	if (nt->FileHeader.Machine != expectedMachine)
+	{
+		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "PE architecture check failed.");
+	}
+
 	ulSize = nt->OptionalHeader.SizeOfImage;
 	ulBase = ulModule;
 

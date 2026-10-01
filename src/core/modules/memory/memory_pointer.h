@@ -35,6 +35,7 @@
 using namespace boost::python;
 
 // Memory
+#include "memory_addr.h"
 #include "memory_alloc.h"
 #include "memory_rtti.h"
 
@@ -68,9 +69,9 @@ class CFunctionInfo;
 class CPointer
 {
 public:
-	CPointer(unsigned long ulAddr = 0, bool bAutoDealloc = false);
+	CPointer(Addr_t ulAddr = 0, bool bAutoDealloc = false);
 	
-	operator unsigned long() const { return m_ulAddr; }
+	operator Addr_t() const { return m_ulAddr; }
 
 	// Implement some operators
 	template<class T>
@@ -177,8 +178,8 @@ public:
 	void				Validate();
 
 public:
-	unsigned long m_ulAddr;
-	bool          m_bAutoDealloc;
+	Addr_t          m_ulAddr;
+	bool            m_bAutoDealloc;
 };
 
 
@@ -187,17 +188,17 @@ public:
 // ============================================================================
 inline CPointer* Alloc(int iSize, bool bAutoDealloc = true)
 {
-	return new CPointer((unsigned long) UTIL_Alloc(iSize), bAutoDealloc);
+	return new CPointer((Addr_t) UTIL_Alloc(iSize), bAutoDealloc);
 }
 
 
 // ============================================================================
 // >> GetPtrHelper
 // ============================================================================
-inline unsigned long GetPtrHelper(unsigned long addr)
+inline Addr_t GetPtrHelper(Addr_t addr)
 {
 	TRY_SEGV()
-		return *(unsigned long *) addr;
+		return *(Addr_t *) addr;
 	EXCEPT_SEGV()
 	return 0;
 }

@@ -118,7 +118,7 @@ void export_binary_file(scope _memory)
 		.def("find_pointer",
 			&CBinaryFile::FindPointer,
 			"Rips out a pointer from a function.",
-			("signature", arg("offset")=0, arg("level")=0),
+			("signature", arg("offset")=0, arg("level")=0, arg("rip_offset")=-1),
 			manage_new_object_policy()
 		)
 
@@ -184,7 +184,7 @@ void export_binary_file(scope _memory)
 
 void export_pointer(scope _memory)
 {
-	class_<CPointer, boost::shared_ptr<CPointer> >("Pointer", init< optional<unsigned long, bool> >())
+	class_<CPointer, boost::shared_ptr<CPointer> >("Pointer", init< optional<Addr_t, bool> >())
 		.def(init<CPointer&>())
 
 		// get/set_<type> methods
@@ -196,7 +196,7 @@ void export_pointer(scope _memory)
 		EXPOSE_GET_SET_TYPE(int, int)
 		EXPOSE_GET_SET_TYPE(uint, unsigned int)
 		EXPOSE_GET_SET_TYPE(long, long)
-		EXPOSE_GET_SET_TYPE(ulong, unsigned long)
+		EXPOSE_GET_SET_TYPE(ulong, Addr_t)
 		EXPOSE_GET_SET_TYPE(long_long, long long)
 		EXPOSE_GET_SET_TYPE(ulong_long, unsigned long long)
 		EXPOSE_GET_SET_TYPE(float, float)
@@ -340,40 +340,40 @@ void export_pointer(scope _memory)
 
         .def(!self)
 
-        .def(self == other<unsigned long>())
+        .def(self == other<Addr_t>())
         .def(self == self)
 
-        .def(self != other<unsigned long>())
+        .def(self != other<Addr_t>())
         .def(self != self)
 
         .def(self += int())
         .def(self += self)
 
-        .def(self < other<unsigned long>())
+        .def(self < other<Addr_t>())
         .def(self < self)
 
-        .def(self <= other<unsigned long>())
+        .def(self <= other<Addr_t>())
         .def(self <= self)
 
-        .def(self > other<unsigned long>())
+        .def(self > other<Addr_t>())
         .def(self > self)
 
-        .def(self >= other<unsigned long>())
+        .def(self >= other<Addr_t>())
         .def(self >= self)
 		
-        .def("__add__", &CPointer::operator+<unsigned long>, manage_new_object_policy())
+        .def("__add__", &CPointer::operator+<Addr_t>, manage_new_object_policy())
         .def("__add__", &CPointer::operator+<CPointer>, manage_new_object_policy())
 
-        .def("__radd__", &CPointer::operator+<unsigned long>, manage_new_object_policy())
+        .def("__radd__", &CPointer::operator+<Addr_t>, manage_new_object_policy())
         .def("__radd__", &CPointer::operator+<CPointer>, manage_new_object_policy())
 
         .def(self -= int())
         .def(self -= self)
 		
-        .def("__sub__", &CPointer::operator-<unsigned long>, manage_new_object_policy())
+        .def("__sub__", &CPointer::operator-<Addr_t>, manage_new_object_policy())
         .def("__sub__", &CPointer::operator-<CPointer>, manage_new_object_policy())
 
-        .def("__rsub__", &CPointer::operator-<unsigned long>, manage_new_object_policy())
+        .def("__rsub__", &CPointer::operator-<Addr_t>, manage_new_object_policy())
         .def("__rsub__", &CPointer::operator-<CPointer>, manage_new_object_policy())
 
 		// Attributes
@@ -453,7 +453,7 @@ void export_type_info_iter(scope _memory)
 // ============================================================================
 void export_function(scope _memory)
 {
-	class_<CFunction, bases<CPointer> >("Function", init<unsigned long, object, object, object>())
+	class_<CFunction, bases<CPointer> >("Function", init<Addr_t, object, object, object>())
 		.def(init<CFunction&>())
 
 		.def("__call__",

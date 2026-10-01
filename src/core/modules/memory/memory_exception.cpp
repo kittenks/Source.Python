@@ -48,19 +48,46 @@ int ExceptionHandler(_EXCEPTION_POINTERS* info, DWORD code)
 		EXCEPTION_RECORD* record = info->ExceptionRecord;
 		char* exc_message;
 
+		// ExceptionInformation[1] is a ULONG_PTR - pointer-width, so 8 bytes on
+		// x86-64 and 4 on x86-32 - and it is printed with %llu plus an explicit
+		// cast. Both halves of that matter.
+		//
+		// With %u, PyErr_Format read only the low 32 bits, so every address in
+		// this message was silently halved on x86-64. That is not cosmetic. A
+		// reported address of 2207807472 (0x839877F0) was in fact
+		// 0x7FFA839877F0, and the only reason it appeared to agree with the
+		// address of the function being called was a coincidence of the low
+		// half. Any conclusion drawn from this message was unsound.
+		//
+		// Simply changing %u to %llu would be wrong the other way. %llu always
+		// reads 8 bytes, but on x86-32 the argument is only 4, so the format
+		// would consume the following argument slot. The cast widens the value
+		// before the variadic promotion, so one form is right on both
+		// architectures.
+		//
+		// ExceptionInformation[0] is cast to int for the same reason. Its values
+		// are small - 0, 1 and 8 for read, write and execute - so %i was reading
+		// the right number by luck of the magnitude, not because the format
+		// matched the type.
+		typedef unsigned long long AddrPrint_t;
+
 		if (record->ExceptionInformation[0] == 0)
-			exc_message = "Access violation while reading address '%u'.";
+			exc_message = "Access violation while reading address '%llu'.";
 		else if (record->ExceptionInformation[0] == 1)
-			exc_message = "Access violation while writing address '%u'.";
+			exc_message = "Access violation while writing address '%llu'.";
 		else if (record->ExceptionInformation[0] == 8)
-			exc_message = "Access violation while executing address '%u'.";
+			exc_message = "Access violation while executing address '%llu'.";
 		else
 			BOOST_RAISE_EXCEPTION(
 				PyExc_RuntimeError,
-				"Unknown access violation '%i' at address '%u'.", 
-				record->ExceptionInformation[0], record->ExceptionInformation[1])
+				"Unknown access violation '%i' at address '%llu'.", 
+				static_cast<int>(record->ExceptionInformation[0]),
+				static_cast<AddrPrint_t>(record->ExceptionInformation[1]))
 
-		BOOST_RAISE_EXCEPTION(PyExc_RuntimeError, exc_message, record->ExceptionInformation[1])
+		BOOST_RAISE_EXCEPTION(
+			PyExc_RuntimeError,
+			exc_message,
+			static_cast<AddrPrint_t>(record->ExceptionInformation[1]))
 	}
 
 	return EXCEPTION_CONTINUE_SEARCH;

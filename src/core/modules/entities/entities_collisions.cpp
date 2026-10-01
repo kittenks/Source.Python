@@ -213,7 +213,7 @@ void CCollisionManager::RegisterHook(T tFunc, unsigned int uiFilterIndex, unsign
 		)
 	}
 
-	CFunction *pFunc = CPointer((unsigned long)((void *)enginetrace)).MakeVirtualFunction(*pInfo);
+	CFunction *pFunc = CPointer((Addr_t)((void *)enginetrace)).MakeVirtualFunction(*pInfo);
 	delete pInfo;
 
 	if (!pFunc || !pFunc->IsHookable()) {
@@ -237,6 +237,14 @@ void CCollisionManager::RegisterHook(T tFunc, unsigned int uiFilterIndex, unsign
 				szDebugName
 			)
 		}
+
+		// Ownership hand-off to the hook; the pFunc below is deleted
+		// immediately, and ~CFunction frees its calling convention unless
+		// m_bHooked records that the hook has taken it. This call site bypasses
+		// HookFunctionHelper, so it does the hand-off itself. See
+		// memory_function.cpp for the full protocol.
+		if (pFunc->m_pCallingConvention)
+			pFunc->m_pCallingConvention->m_bHooked = true;
 	}
 
 	delete pFunc;

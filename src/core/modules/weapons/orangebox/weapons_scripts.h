@@ -53,7 +53,7 @@ public:
 		if (uiIndex >= pWeaponDataBase->Count())
 			BOOST_RAISE_EXCEPTION(PyExc_IndexError, "Index out of range.");
 
-		return new CPointer((unsigned long)(void *)pWeaponDataBase->Element(uiIndex));
+		return new CPointer((Addr_t)(void *)pWeaponDataBase->Element(uiIndex));
 	}
 };
 

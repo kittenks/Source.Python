@@ -191,7 +191,7 @@ public:
 			case KeyValues::TYPE_STRING: return object(subkey->GetString()); break;
 			case KeyValues::TYPE_INT: return object(subkey->GetInt()); break;
 			case KeyValues::TYPE_FLOAT: return object(subkey->GetFloat()); break;
-			case KeyValues::TYPE_PTR: return object(CPointer((unsigned long) subkey->GetPtr())); break;
+			case KeyValues::TYPE_PTR: return object(CPointer((Addr_t) subkey->GetPtr())); break;
 			case KeyValues::TYPE_COLOR: return object(subkey->GetColor()); break;
 			case KeyValues::TYPE_UINT64: return object(subkey->GetUint64()); break;
 			default: BOOST_RAISE_EXCEPTION(PyExc_NotImplementedError, "Unsupported type '%i' for key '%s'.", subkey->GetDataType(), subkey->GetName());

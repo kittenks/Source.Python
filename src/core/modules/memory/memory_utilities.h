@@ -63,7 +63,7 @@
 // ============================================================================
 // >> ExtractAddress
 // ============================================================================
-inline unsigned long ExtractAddress(object oPtr, bool bValidate = false)
+inline Addr_t ExtractAddress(object oPtr, bool bValidate = false)
 {
 	CPointer* pPtr;
 
@@ -113,7 +113,7 @@ inline std::vector<DataType_t> ObjectToDataTypeVector(object oArgTypes)
 template<class T>
 CPointer* __ptr__(T* pThis)
 {
-	return new CPointer((unsigned long) pThis);
+	return new CPointer((Addr_t) pThis);
 }
 
 // Use this macro to add this class to get_pointer_object()

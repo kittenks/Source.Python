@@ -723,7 +723,7 @@ class TypeManager(dict):
 
     def global_pointer(
             self, cls, binary, identifier, offset=0, level=0, srv_check=True,
-            accessor=False, accessor_offset=0):
+            accessor=False, accessor_offset=0, rip_offset=-1):
         """Search for a global pointer and wrap the it."""
         manager_logger.log_debug(
             'Retrieving global pointer for {}...'.format(cls.__name__))
@@ -733,6 +733,14 @@ class TypeManager(dict):
 
         # Get the global pointer
         if accessor:
+            if rip_offset >= 0:
+                # The accessor form calls a function to obtain the pointer, so
+                # there is no displacement field for rip_offset to name. Failing
+                # here beats silently ignoring one of the two and returning a
+                # plausible but wrong address.
+                raise ValueError(
+                    'rip_offset cannot be combined with accessor for "{}".'
+                    .format(cls.__name__))
             ptr = binary[identifier]
             ptr = (ptr + offset + ptr.get_pointer(accessor_offset)).make_function(
                 Convention.CDECL,
@@ -742,7 +750,7 @@ class TypeManager(dict):
             for _ in range(level):
                 ptr = ptr.get_pointer()
         else:
-            ptr = binary.find_pointer(identifier, offset, level)
+            ptr = binary.find_pointer(identifier, offset, level, rip_offset)
 
         # Raise an error if the pointer is invalid
         if not ptr:
@@ -765,7 +773,12 @@ class TypeManager(dict):
                 (Key.LEVEL, Key.as_int, 0),
                 (Key.SRV_CHECK, Key.as_bool, True),
                 (Key.ACCESSOR, Key.as_bool, False),
-                (Key.ACCESSOR_OFFSET, Key.as_int, 0)
+                (Key.ACCESSOR_OFFSET, Key.as_int, 0),
+                # Appended rather than inserted next to OFFSET: the order of
+                # this tuple is the positional order of the arguments to
+                # global_pointer below, so a new key has to be added to both in
+                # the same place or a value ends up in the wrong parameter.
+                (Key.RIP_OFFSET, Key.as_int, -1)
             )
         )
 

@@ -108,11 +108,6 @@ IVoiceServer*			voiceserver			= NULL;
 INetworkStringTableContainer* networkstringtable = NULL;
 
 //-----------------------------------------------------------------------------
-// External globals
-//-----------------------------------------------------------------------------
-extern ICvar* g_pCVar;
-
-//-----------------------------------------------------------------------------
 // Extern functions
 //-----------------------------------------------------------------------------
 extern void InitCommands();
@@ -289,7 +284,7 @@ bool CSourcePython::Load(	CreateInterfaceFn interfaceFactory, CreateInterfaceFn 
 #endif
 
 	DevMsg(1, MSG_PREFIX "Retrieving the current cache notifier...\n");
-	m_pOldMDLCacheNotifier = *(IMDLCacheNotify **)(((unsigned long) modelcache) + CACHE_NOTIFY_OFFSET);
+	m_pOldMDLCacheNotifier = *(IMDLCacheNotify **)(((Addr_t) modelcache) + CACHE_NOTIFY_OFFSET);
 
 	DevMsg(1, MSG_PREFIX "Setting the new cache notifier...\n");
 	modelcache->SetCacheNotify(this);
@@ -483,8 +478,8 @@ void CSourcePython::ClientSettingsChanged( edict_t *pEdict )
 //-----------------------------------------------------------------------------
 PLUGIN_RESULT CSourcePython::ClientConnect( bool *bAllowConnect, edict_t *pEntity, const char *pszName, const char *pszAddress, char *reject, int maxrejectlen )
 {
-	CPointer allowConnect = CPointer((unsigned long) bAllowConnect);
-	CPointer rejectMessage = CPointer((unsigned long) reject);
+	CPointer allowConnect = CPointer((Addr_t) bAllowConnect);
+	CPointer rejectMessage = CPointer((Addr_t) reject);
 	CALL_LISTENERS(OnClientConnect, allowConnect, ptr(pEntity), pszName, pszAddress, rejectMessage, maxrejectlen);
 	return PLUGIN_OVERRIDE;
 }

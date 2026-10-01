@@ -84,6 +84,21 @@ class Key(object):
     LENGTH = 'length'
 
     # Pointer keys
+    # RIP_OFFSET is for the x86-64 global-pointer form. Where OFFSET adds a
+    # constant to the match and LEVEL then dereferences it - which works because
+    # a 32-bit build encodes `mov ecx, <absolute address>` and so stores the
+    # address in full - x86-64 reaches a global through `lea reg, [rip+disp32]`,
+    # where the encoded field is a displacement. RIP_OFFSET names the byte offset
+    # of that field from the signature match, and the address is recovered as
+    #
+    #     (match + rip_offset + 4) + *(int32 *)(match + rip_offset)
+    #
+    # which is the one piece of arithmetic the offset/level pair cannot express.
+    # The default is -1, meaning "not RIP-relative", so every existing entry on
+    # every platform keeps its current behaviour. In an ini it is written as
+    # rip_offset_windows_x86_64, since the key resolver appends
+    # _<platform>_<architecture> to whatever name is registered here.
+    RIP_OFFSET = 'rip_offset'
     LEVEL = 'level'
     ACCESSOR = 'accessor'
     ACCESSOR_OFFSET = 'accessor_offset'

@@ -119,7 +119,7 @@ public:
 	m_pRegisterPre in a pre-hook and m_pRegisterPost in a post-hook.
 	*/
 	CRegisters* GetRegisters();
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) && defined(__x86_64__)) || defined(DYNAMICHOOKS_X86_64)
 	bool GetUsePreRegisters();
 	void SetUsePreRegisters(bool value);
 	void* GetCurrentReturnAddress();
@@ -165,7 +165,7 @@ private:
 
 	bool CreatePostCallback();
 
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) && defined(__x86_64__)) || defined(DYNAMICHOOKS_X86_64)
 	static bool DispatchPre(CHook* pHook, void* pSnapshot, void* pStack);
 	static void* DispatchPost(CHook* pHook, void* pSnapshot, void* pStack);
 	void SnapshotToRegisters(void* pSnapshot, CRegisters* pRegisters, bool bPost);
@@ -205,7 +205,7 @@ public:
 
 	asmjit::JitRuntime m_asmjit_rt;
 
-#if defined(__linux__) && defined(__x86_64__)
+#if (defined(__linux__) && defined(__x86_64__)) || defined(DYNAMICHOOKS_X86_64)
 	// Appended so the layout of all existing x86 members remains unchanged.
 	size_t m_iCopiedBytes;
 	size_t m_iTrampolineSize;
@@ -213,6 +213,14 @@ public:
 	size_t m_iRelaySize;
 	unsigned char m_CopiedBytes[32];
 	bool m_bTargetPatched;
+#if defined(DYNAMICHOOKS_X86_64)
+	// Windows x64 only. Bytes actually overwritten at the target (and restored on
+	// unhook): this can exceed m_iCopiedBytes for a sub-5-byte function, whose
+	// 5-byte relative detour borrows bytes from the inter-function CC/0x90 padding.
+	// Kept in a Windows-only block at the end so the Linux x64 layout above stays
+	// byte-identical to the upstream header and to the prebuilt libDynamicHooks.a.
+	size_t m_iPatchBytes;
+#endif
 #endif
 };
 

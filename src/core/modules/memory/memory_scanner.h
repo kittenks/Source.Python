@@ -37,34 +37,43 @@
 struct Signature_t
 {
 	unsigned char* m_szSignature;
-	unsigned long  m_ulAddr;
+	Addr_t         m_ulAddr;
 };
 
 
 class CBinaryFile
 {
 public:
-	CBinaryFile(unsigned long ulModule, unsigned long ulBase, unsigned long ulSize);
+	CBinaryFile(Addr_t ulModule, Addr_t ulBase, unsigned long ulSize);
 
 	CPointer* FindSignatureRaw(object oSignature);
 
 	CPointer* FindSignature(object oSignature);
 	CPointer* FindSymbol(char* szSymbol);
-	CPointer* FindPointer(object oIdentifier, int iOffset, unsigned int iLevel);
+
+	// iRipOffset < 0 selects the original behaviour: add iOffset to the match,
+	// then dereference iLevel times. iRipOffset >= 0 selects the x86-64
+	// RIP-relative form, where the 32-bit displacement encoded at match+iRipOffset
+	// is resolved against the end of that field, giving
+	//     (match + iRipOffset + 4) + *(int32 *)(match + iRipOffset)
+	// and iOffset is then unused. iLevel still applies afterwards, so a global
+	// that is a pointer to the object is expressed with iLevel = 1.
+	CPointer* FindPointer(object oIdentifier, int iOffset, unsigned int iLevel,
+	                      int iRipOffset = -1);
 	CPointer* FindAddress(object oIdentifier);
 
 	dict GetSymbols();
 
 private:
-	void AddSignatureToCache(unsigned char* sigstr, int iLength, unsigned int ulAddr);
+	void AddSignatureToCache(unsigned char* sigstr, int iLength, Addr_t ulAddr);
 
 	bool SearchSigInCache(unsigned char* sigstr, CPointer*& result);
 	bool SearchSigInBinary(object oSignature, int iLength, unsigned char* sigstr, CPointer*& result);
 	bool SearchSigHooked(object oSignature, int iLength, unsigned char* sigstr, CPointer*& result);
 
 public:
-	unsigned long			m_ulModule;
-	unsigned long			m_ulBase;
+	Addr_t				m_ulModule;
+	Addr_t				m_ulBase;
 	unsigned long			m_ulSize;
 	std::list<Signature_t>	m_Signatures;
 };

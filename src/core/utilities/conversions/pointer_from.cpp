@@ -64,7 +64,7 @@ bool PointerFromBaseEntity( CBaseEntity *pBaseEntity, CPointer& output)
 	if (!pBaseEntity)
 		return false;
 
-	output = CPointer((unsigned long) pBaseEntity);
+	output = CPointer((Addr_t) pBaseEntity);
 	return true;
 }
 

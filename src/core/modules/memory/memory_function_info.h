@@ -51,6 +51,16 @@
 // ========================================================================
 #define SH_PTRSIZE sizeof(void *)
 
+// SH_PTRSIZE cannot be used in a preprocessor conditional, because sizeof is
+// not something the preprocessor can evaluate: `#if SH_PTRSIZE == 8` expands to
+// `#if sizeof(void *) == 8` and fails to compile. The size as an integer
+// constant, for the few places that need to branch at compile time.
+#if defined(_WIN64) || defined(__x86_64__) || defined(__LP64__) || defined(_LP64) || defined(__aarch64__)
+	#define SH_PTRSIZE_INT 8
+#else
+	#define SH_PTRSIZE_INT 4
+#endif
+
 // Don Clugston:
 //		implicit_cast< >
 // I believe this was originally going to be in the C++ standard but
@@ -142,6 +152,43 @@ inline int MFI_GetVtblOffset(void *mfp)
 
     // With varargs, the this pointer is passed as if it was the first argument
 
+#if SH_PTRSIZE_INT == 8
+
+    // x86-64. Measured, not assumed: for a virtual member function the MSVC
+    // x64 thunk is always
+    //
+    //     48 8B 01           mov  rax, [rcx]
+    //     FF 60 disp8        jmp  qword ptr [rax+disp8]
+    //
+    // and the member function pointer itself is a single 8-byte value, so this
+    // build takes the MFI_Impl<1*SH_PTRSIZE> specialisation above. There is only
+    // one shape, including for varargs: floating point arguments travel in XMM
+    // registers on this ABI, so the this pointer never has to be re-read from
+    // the stack and the extra "mov r8, [rsp+8]" prologue that x86 needs does not
+    // appear. A representative dump:
+    //
+    //     SetServerHibernation  48 8B 01 FF 60 08
+    //     LevelInit             48 8B 01 FF 60 10
+    //     GetGameDescription    48 8B 01 FF 60 18
+    //     ReturnsDoubleVararg   48 8B 01 FF 60 30
+    //
+    // The 32-bit patterns below cannot match any of that, because the first byte
+    // is 0x48 and not 0x8B. That is why every virtual function on Windows x86-64
+    // used to be reported as non-virtual, which surfaced as
+    // "Function is not a virtual function." from make_virtual_function - the
+    // first symptom being the hibernation hook, but the defect was not specific
+    // to it.
+    if (addr[0] == 0x48 && addr[1] == 0x8B && addr[2] == 0x01)
+    {
+        addr += 3;
+    }
+    else
+    {
+        return -1;
+    }
+
+#else
+
     bool ok = false;
     if (addr[0] == 0x8B && addr[1] == 0x44 && addr[2] == 0x24 && addr[3] == 0x04 &&
         addr[4] == 0x8B && addr[5] == 0x00)
@@ -157,15 +204,24 @@ inline int MFI_GetVtblOffset(void *mfp)
     if (!ok)
         return -1;
 
+#endif
+
     if (*addr++ == 0xFF)
     {
         if (*addr == 0x60)
         {
-            return *++addr / 4;
+            // The displacement is in bytes, so the vtable index is obtained by
+            // dividing by the pointer size: 4 on x86-32, 8 on x86-64. The original
+            // code divided by a literal 4, which happened to be right only on
+            // 32-bit. Both give the same index for the same function, which is
+            // why the existing offset_windows data needs no change:
+            //     x64 SetServerHibernation  0x08 / 8 = 1
+            //     x86 SetServerHibernation  0x04 / 4 = 1
+            return *++addr / (int) SH_PTRSIZE;
         }
         else if (*addr == 0xA0)
         {
-            return *((unsigned int*)++addr) / 4;
+            return *((unsigned int*)++addr) / (int) SH_PTRSIZE;
         }
         else if (*addr == 0x20)
             return 0;

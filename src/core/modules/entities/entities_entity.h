@@ -139,7 +139,7 @@ public:
 	template<class T>
 	T GetDatamapPropertyByOffset(int offset)
 	{
-		return *(T*) (((unsigned long) this) + offset);
+		return *(T*) (((Addr_t) this) + offset);
 	}
 
 	const char* GetDatamapPropertyStringArray(const char* name)
@@ -149,7 +149,7 @@ public:
 
 	const char* GetDatamapPropertyStringArrayByOffset(int offset)
 	{
-		return (const char*) (((unsigned long) this) + offset);
+		return (const char*) (((Addr_t) this) + offset);
 	}
 
 	template<class T>
@@ -161,7 +161,15 @@ public:
 	template<class T>
 	void SetDatamapPropertyByOffset(int offset, T value)
 	{
-		*(T*) (((unsigned long) this) + offset) = value;
+		// (Addr_t), not (unsigned long). Under LLP64 `long` is 32 bits while
+		// `this` is 64, so the cast truncated the object pointer and the write
+		// went to a low-4GB address instead of to the entity.
+		//
+		// The four Get*ByOffset siblings directly above and below this one were
+		// converted to Addr_t during the LLP64 pass; these three writers were
+		// missed. That asymmetry is the whole bug: reading through a truncated
+		// pointer usually returns garbage, while writing through one faults.
+		*(T*) (((Addr_t) this) + offset) = value;
 	}
 
 	void SetDatamapPropertyStringArray(const char* name, const char* value)
@@ -171,7 +179,7 @@ public:
 
 	void SetDatamapPropertyStringArrayByOffset(int offset, const char* value)
 	{
-		strcpy((char*) (((unsigned long) this) + offset), value);
+		strcpy((char*) (((Addr_t) this) + offset), value);
 	}
 
 	// Network property methods
@@ -186,7 +194,7 @@ public:
 	template<class T>
 	T GetNetworkPropertyByOffset(int offset)
 	{
-		return *(T *) (((unsigned long) this) + offset);
+		return *(T *) (((Addr_t) this) + offset);
 	}
 
 	const char* GetNetworkPropertyStringArray(const char* name)
@@ -196,7 +204,7 @@ public:
 
 	const char* GetNetworkPropertyStringArrayByOffset(int offset)
 	{
-		return (const char*) (((unsigned long) this) + offset);
+		return (const char*) (((Addr_t) this) + offset);
 	}
 
 	template<class T>
@@ -208,7 +216,8 @@ public:
 	template<class T>
 	void SetNetworkPropertyByOffset(int offset, T value)
 	{
-		*(T *) (((unsigned long) this) + offset) = value;
+		// (Addr_t), not (unsigned long) - see SetDatamapPropertyByOffset above.
+		*(T *) (((Addr_t) this) + offset) = value;
 		GetEdict()->StateChanged();
 	}
 
@@ -219,7 +228,7 @@ public:
 
 	void SetNetworkPropertyStringArrayByOffset(int offset, const char* value)
 	{
-		strcpy((char*) (((unsigned long) this) + offset), value);
+		strcpy((char*) (((Addr_t) this) + offset), value);
 		GetEdict()->StateChanged();
 	}
 

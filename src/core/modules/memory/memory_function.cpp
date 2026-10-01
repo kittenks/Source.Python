@@ -38,7 +38,14 @@
 #include "memory_wrap.h"
 
 // DynamicHooks
-#ifdef SOURCEPYTHON_X86_64
+// Windows x86-64 and Linux x86-64 are both 64-bit, so both take the x64
+// backend, but their calling conventions are unrelated: Windows passes integer
+// and SSE arguments by position into RCX/RDX/R8/R9 and XMM0-3, while SysV
+// numbers the two register classes independently. The classes share an
+// interface, so this is a choice of which one to instantiate.
+#if defined(SOURCEPYTHON_X86_64) && defined(_WIN32)
+#include "conventions/x64MsWin64.h"
+#elif defined(SOURCEPYTHON_X86_64)
 #include "conventions/x64GccSystemV.h"
 #else
 #include "conventions/x86MsCdecl.h"
@@ -100,7 +107,19 @@ int GetDynCallConvention(Convention_t eConv)
 // ============================================================================
 ICallingConvention* MakeDynamicHooksConvention(Convention_t eConv, std::vector<DataType_t> vecArgTypes, DataType_t returnType, int iAlignment)
 {
-#ifdef SOURCEPYTHON_X86_64
+	// On x86-64 there is only one calling convention per platform, so CDECL and
+	// THISCALL both resolve to it. STDCALL and FASTCALL do not exist there at
+	// all, which is why they are not listed: GetCallingConvention in
+	// memory_calling_convention.h reports CONV_CDECL for every signature on
+	// x86-64, and that is what arrives here.
+#if defined(SOURCEPYTHON_X86_64) && defined(_WIN32)
+	switch (eConv)
+	{
+	case CONV_CDECL:
+	case CONV_THISCALL:
+		return new x64MsWin64(vecArgTypes, returnType, iAlignment);
+	}
+#elif defined(SOURCEPYTHON_X86_64)
 	switch (eConv)
 	{
 	case CONV_CDECL:
@@ -133,7 +152,7 @@ ICallingConvention* MakeDynamicHooksConvention(Convention_t eConv, std::vector<D
 // ============================================================================
 // >> CFunction
 // ============================================================================
-CFunction::CFunction(unsigned long ulAddr, object oCallingConvention, object oArgs, object oReturnType)
+CFunction::CFunction(Addr_t ulAddr, object oCallingConvention, object oArgs, object oReturnType)
 	:CPointer(ulAddr)
 {
 	// Step 1: Validate and convert the argument types
@@ -179,7 +198,7 @@ CFunction::CFunction(unsigned long ulAddr, object oCallingConvention, object oAr
 	m_iCallingConvention = GetDynCallConvention(m_eCallingConvention);
 }
 
-CFunction::CFunction(unsigned long ulAddr, Convention_t eCallingConvention,
+CFunction::CFunction(Addr_t ulAddr, Convention_t eCallingConvention,
 	int iCallingConvention, tuple tArgs, DataType_t eReturnType, object oConverter)
 	:CPointer(ulAddr)
 {
@@ -225,10 +244,14 @@ CFunction::~CFunction()
 		// If we are using a built-in convention that is currently hooked, let's flag it as no longer hooked
 		// so that we know we are not bound to a CFunction anymore and can be deleted.
 		if (m_pCallingConvention->m_bHooked)
+		{
 			m_pCallingConvention->m_bHooked = false;
+		}
 		// If the convention isn't flagged as hooked, then we need to take care of it.
 		else
+		{
 			delete m_pCallingConvention;
+		}
 	}
 
 	m_pCallingConvention = NULL;
@@ -255,12 +278,12 @@ CFunction* CFunction::GetTrampoline()
 	if (!pHook)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Function was not hooked.")
 
-	return new CFunction((unsigned long) pHook->m_pTrampoline, m_eCallingConvention,
+	return new CFunction((Addr_t) pHook->m_pTrampoline, m_eCallingConvention,
 		m_iCallingConvention, m_tArgs, m_eReturnType, m_oConverter);
 }
 
 template<class ReturnType, class Function>
-ReturnType CallHelper(Function func, DCCallVM* vm, unsigned long addr)
+ReturnType CallHelper(Function func, DCCallVM* vm, Addr_t addr)
 {
 	ReturnType result;
 	TRY_SEGV()
@@ -269,7 +292,7 @@ ReturnType CallHelper(Function func, DCCallVM* vm, unsigned long addr)
 	return result;
 }
 
-void CallHelperVoid(DCCallVM* vm, unsigned long addr)
+void CallHelperVoid(DCCallVM* vm, Addr_t addr)
 {
 	TRY_SEGV()
 		dcCallVoid(vm, addr);
@@ -310,14 +333,14 @@ object CFunction::Call(PyObject *args, PyObject *kw)
 			case DATA_TYPE_DOUBLE:		dcArgDouble(g_pCallVM, extract<double>(arg)); break;
 			case DATA_TYPE_POINTER:
 			{
-				unsigned long ulAddr = 0;
+				Addr_t ulAddr = 0;
 				if (arg != Py_None)
 					ulAddr = ExtractAddress(object(handle<>(borrowed(arg))));
 
 				dcArgPointer(g_pCallVM, ulAddr);
 				break;
 			}
-			case DATA_TYPE_STRING:		dcArgPointer(g_pCallVM, (unsigned long) (void *) extract<char *>(arg)); break;
+			case DATA_TYPE_STRING:		dcArgPointer(g_pCallVM, (Addr_t) (void *) extract<char *>(arg)); break;
 			default:					BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Unknown argument type.")
 		}
 	}
@@ -341,7 +364,7 @@ object CFunction::Call(PyObject *args, PyObject *kw)
 		case DATA_TYPE_DOUBLE:		return object(CallHelper<double>(dcCallDouble, g_pCallVM, m_ulAddr));
 		case DATA_TYPE_POINTER:
 		{
-			CPointer pPtr = CPointer(CallHelper<unsigned long>(dcCallPointer, g_pCallVM, m_ulAddr));
+			CPointer pPtr = CPointer(CallHelper<Addr_t>(dcCallPointer, g_pCallVM, m_ulAddr));
 			if (!m_oConverter.is_none())
 				return m_oConverter(pPtr);
 
@@ -359,7 +382,7 @@ object CFunction::CallTrampoline(PyObject *args, PyObject *kw)
 	if (!pHook)
 		BOOST_RAISE_EXCEPTION(PyExc_ValueError, "Function was not hooked.")
 
-	return CFunction((unsigned long) pHook->m_pTrampoline, m_eCallingConvention,
+	return CFunction((Addr_t) pHook->m_pTrampoline, m_eCallingConvention,
 		m_iCallingConvention, m_tArgs, m_eReturnType, m_oConverter).Call(args, kw);
 }
 
@@ -367,18 +390,46 @@ object CFunction::SkipHooks(PyObject *args, PyObject *kw)
 {
 	CHook* pHook = GetHookManager()->FindHook((void *) m_ulAddr);
 	if (pHook)
-		return CFunction((unsigned long) pHook->m_pTrampoline, m_eCallingConvention,
+		return CFunction((Addr_t) pHook->m_pTrampoline, m_eCallingConvention,
 			m_iCallingConvention, m_tArgs, m_eReturnType, m_oConverter).Call(args, kw);
 
 	return Call(args, kw);
 }
 
-CHook* HookFunctionHelper(void* addr, ICallingConvention* pConv)
+CHook* HookFunctionHelper(void* addr, ICallingConvention* pConv, Convention_t eConv)
 {
 	CHook* result;
 	TRY_SEGV()
 		result = GetHookManager()->HookFunction(addr, pConv);
 	EXCEPT_SEGV()
+
+	// Ownership hand-off, recorded explicitly.
+	//
+	// This is belt and braces, not the fix for anything. DynamicHooks already
+	// does it: hook_x64.cpp ends its bridge setup with
+	//
+	//   m_bTargetPatched = true;
+	//   m_pCallingConvention->m_bHooked = true;
+	//
+	// so by the time HookFunction returns, the convention is already flagged.
+	// An earlier revision of this file carried a long comment claiming the flag
+	// was never set anywhere, and a matching "fix" here. Both were wrong: the
+	// claim was based on searching SP's tree, and src/thirdparty/DynamicHooks
+	// ships headers and prebuilt libraries with no .cpp in it, so the assignment
+	// that mattered was in the implementation compiled into DynamicHooks.lib and
+	// was never in the repository to be found. Setting the flag here changed
+	// nothing observable, which is what the evidence then said.
+	//
+	// The flag is still set, because it costs one store and it makes the
+	// hand-off visible at this call site rather than depending on a library's
+	// internals. It is not presented as fixing the crash at
+	// core.dll+0x48DFD2, because it does not.
+	//
+	// Set only on success: if HookFunction fails, the convention must stay owned
+	// by the CFunction so that its destructor frees it as it did before.
+	if (result && pConv)
+		pConv->m_bHooked = true;
+
 	return result;
 }
 
@@ -419,7 +470,8 @@ void CFunction::AddHook(HookType_t eType, PyObject* pCallable)
 	);
 
 	if (!pHook) {
-		pHook = HookFunctionHelper((void *) m_ulAddr, m_pCallingConvention);
+		pHook = HookFunctionHelper((void *) m_ulAddr, m_pCallingConvention,
+			m_eCallingConvention);
 
 		// Reserve a Python reference for DynamicHooks.
 		if (m_eCallingConvention == CONV_CUSTOM)
@@ -443,6 +495,11 @@ bool CFunction::AddHook(HookType_t eType, HookHandlerFn* pFunc)
 
 		if (!pHook)
 			return false;
+
+		// Ownership hand-off; see HookFunctionHelper for why the flag has to be
+		// set here and why nothing used to set it.
+		if (m_pCallingConvention)
+			m_pCallingConvention->m_bHooked = true;
 
 		// Reserve a Python reference for DynamicHooks.
 		if (m_eCallingConvention == CONV_CUSTOM)

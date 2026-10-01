@@ -44,6 +44,7 @@ using namespace boost::python;
 #include "utilities/call_python.h"
 #include "modules/entities/entities_entity.h"
 #include "modules/listeners/listeners_manager.h"
+#include "modules/memory/memory_hooks.h"
 
 
 //---------------------------------------------------------------------------------
@@ -193,6 +194,7 @@ bool PrePlayerRunCommand(HookType_t hook_type, CHook* pHook)
 	static object Player = import("players.entity").attr("Player");
 
 	CBaseEntity* pEntity = pHook->GetArgument<CBaseEntity*>(0);
+
 	unsigned int index;
 	if (!IndexFromBaseEntity(pEntity, index)) {
 		if (bRestoreRegisterSelection) {

@@ -41,6 +41,27 @@ If(SOURCEPYTHON_ARCH STREQUAL "x86_64")
     # The HL2SDK keeps its per-architecture Windows libraries in public/x86 and
     # public/x64. Confirmed present at all four x86-64 pins.
     Set(SOURCEPYTHON_SDK_ARCH_DIR x64)
+
+    # The vendored DynamicHooks gates its whole x64 backend, and the x64 half of
+    # the Register_t enumeration in registers.h, behind this macro. It has to
+    # reach Source.Python's own translation units and not just the DynamicHooks
+    # build, because core/modules/memory/memory_function.cpp includes
+    # conventions/x64MsWin64.h and needs RCX, RDX, R8, R9 and XMM0-3 to exist.
+    #
+    # Derived from the compiler's own view of pointer width rather than being
+    # set outright, so that a 32-bit toolchain with SOURCEPYTHON_ARCH=x86_64
+    # fails visibly instead of half-enabling the backend. The i.e. case is
+    # spelled out because a silent mismatch here would surface much later as
+    # missing Register_t enumerators.
+    If(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        Add_Definitions(-DDYNAMICHOOKS_X86_64)
+    Else()
+        Message(FATAL_ERROR
+            "SOURCEPYTHON_ARCH is x86_64 but the compiler reports a "
+            "${CMAKE_SIZEOF_VOID_P}-byte pointer. The Windows x86-64 port needs "
+            "a 64-bit toolchain; the DynamicHooks x64 backend and the x64 "
+            "register table are gated on it.")
+    EndIf()
 Else()
     # PYTHONSDK has to be set here as well, not only in the x86-64 branch. An
     # earlier revision of this file replaced the unconditional
@@ -165,8 +186,19 @@ Set(SOURCEPYTHON_LINK_LIBRARIES
     ${DYNCALLSDK_LIB}/libdyncallback_s.lib
     ${DYNCALLSDK_LIB}/libdynload_s.lib
     ${ASMJITSDK_LIB}/AsmJit.lib
-    ${DYNAMICHOOKSSDK_LIB}/DynamicHooks.lib
 )
+
+# DynamicHooks is linked as a prebuilt static library on x86, but on x86-64 it
+# is compiled from source as part of core (see the target_sources block at the
+# end of this file). The committed win64 prebuilt library was built against the
+# System V x64 ABI and passes hook-handler arguments in rdi/rsi/rdx; linking it
+# into the Windows build reintroduces the bot-join crash, so it is deliberately
+# excluded for x86-64.
+If(SOURCEPYTHON_ARCH STREQUAL "x86")
+    List(APPEND SOURCEPYTHON_LINK_LIBRARIES
+        ${DYNAMICHOOKSSDK_LIB}/DynamicHooks.lib
+    )
+EndIf()
 
 If(SOURCEPYTHON_ARCH STREQUAL "x86_64")
     List(APPEND SOURCEPYTHON_LINK_LIBRARIES
@@ -238,3 +270,52 @@ If( SOURCE_ENGINE MATCHES "csgo" )
         optimized ${SOURCESDK_LIB}/win32/release/vs2010/libprotobuf.lib
     )
 Endif()
+
+# ------------------------------------------------------------------
+# x86-64: compile DynamicHooks and HDE64 from source as part of core.
+#
+# The committed win64 prebuilt DynamicHooks.lib was built against the System V
+# x64 calling convention: its hook bridge passes handler arguments in
+# rdi/rsi/rdx. On Windows x64 the first arguments arrive in rcx/rdx/r8/r9, so
+# linking that library made every detour invoke the MSVC C++ handler with its
+# arguments in the wrong registers (and without the 32-byte shadow space),
+# crashing in movaps as soon as a second bot dispatched PlayerRunCommand.
+# Compiling the DynamicHooks translation units here guarantees that the MS x64
+# ABI implementation in hook_x64.cpp is the code that actually ships.
+#
+# On x86 the upstream prebuilt library is still linked (see the link-library
+# block above), so this whole section is x86-64-only.
+# ------------------------------------------------------------------
+If(SOURCEPYTHON_ARCH STREQUAL "x86_64")
+    # The DynamicHooks sources include "thirdparty/HDE64/hde64.h", which needs
+    # the src/ root on the include path, and x64MsWin64.cpp includes
+    # "x64MsWin64.h", which lives in include/conventions. The "x86.h" pulled in
+    # by hook_x64.cpp is AsmJit's header and is already reachable through
+    # ASMJITSDK_INCLUDE.
+    Target_Include_Directories(core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${DYNAMICHOOKSSDK_INCLUDE}/conventions
+        ${HDE64SDK}
+    )
+
+    Set(SP_DYNAMICHOOKS_X64_SOURCES
+        ${DYNAMICHOOKSSDK}/src/hook_x64.cpp
+        ${DYNAMICHOOKSSDK}/src/manager.cpp
+        ${DYNAMICHOOKSSDK}/src/registers.cpp
+        ${DYNAMICHOOKSSDK}/src/x64MsWin64.cpp
+        ${HDE64SDK}/hde64.c
+    )
+
+    # HDE64 is a C library (table64.h is C-only); never compile it as C++.
+    Set_Source_Files_Properties(${HDE64SDK}/hde64.c PROPERTIES LANGUAGE C)
+
+    Target_Sources(core PRIVATE ${SP_DYNAMICHOOKS_X64_SOURCES})
+
+    # Development-only address/byte diagnostics for the x64 JIT. Off by
+    # default; enable with -DSP_HOOK_DIAG=ON at configure time, which defines
+    # DYNAMICHOOKS_DIAG=1 for the core target only.
+    Option(SP_HOOK_DIAG "Enable verbose DynamicHooks x64 address/byte diagnostics (development only)" OFF)
+    If(SP_HOOK_DIAG)
+        Target_Compile_Definitions(core PRIVATE DYNAMICHOOKS_DIAG=1)
+    EndIf()
+EndIf()

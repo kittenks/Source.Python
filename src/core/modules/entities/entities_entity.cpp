@@ -182,7 +182,7 @@ CBaseEntityOutputWrapper* CBaseEntityWrapper::get_output(const char* name)
 				if (!(pCurrentDataDesc.flags & FTYPEDESC_OUTPUT))
 					continue;
 
-				return (CBaseEntityOutputWrapper *)((unsigned long)this + TypeDescriptionExt::get_offset(pCurrentDataDesc));
+				return (CBaseEntityOutputWrapper *)((Addr_t)this + TypeDescriptionExt::get_offset(pCurrentDataDesc));
 			}
 		}
 

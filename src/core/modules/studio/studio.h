@@ -84,7 +84,7 @@ public:
 
 	static CPointer *get_procedure(mstudiobone_t *pModelBone)
 	{
-		return new CPointer((unsigned long)pModelBone->pProcedure());
+		return new CPointer((Addr_t)pModelBone->pProcedure());
 	}
 
 	static const char *get_surface_name(mstudiobone_t *pModelBone)

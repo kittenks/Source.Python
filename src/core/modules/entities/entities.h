@@ -96,7 +96,7 @@ public:
 class CBaseHandleExt
 {
 public:
-	static boost::shared_ptr<CBaseHandle> __init__(unsigned long value)
+	static boost::shared_ptr<CBaseHandle> __init__(Addr_t value)
 	{
 		CBaseHandle hBaseHandle = CBaseHandle::UnsafeFromIndex(value);
 		return boost::shared_ptr<CBaseHandle>(new CBaseHandle(hBaseHandle));

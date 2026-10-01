@@ -45,7 +45,7 @@ inline const char* FindOutputName(CBaseEntity* pCaller, void* pOutput)
 		for (int iCurrentIndex=0; iCurrentIndex < pDatamap->dataNumFields; ++iCurrentIndex)
 		{
 			typedescription_t& pCurrentDataDesc = pDatamap->dataDesc[iCurrentIndex];
-			if ((unsigned long) pCaller + TypeDescriptionExt::get_offset(pCurrentDataDesc) == (unsigned long) pOutput)
+			if ((Addr_t) pCaller + TypeDescriptionExt::get_offset(pCurrentDataDesc) == (Addr_t) pOutput)
 				return pCurrentDataDesc.externalName;
 		}
 
