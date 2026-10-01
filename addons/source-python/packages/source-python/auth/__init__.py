@@ -20,5 +20,7 @@ from paths import AUTH_CFG_PATH
 # Get the sp.auth logger
 auth_logger = _sp_logger.auth
 
-if not AUTH_CFG_PATH.exists():
-    AUTH_CFG_PATH.mkdir()
+# Recursively create the authorization config directory (and any missing
+# parents) so a clean installation can bootstrap itself. makedirs_p() is
+# idempotent and does not raise if the directory already exists.
+AUTH_CFG_PATH.makedirs_p()

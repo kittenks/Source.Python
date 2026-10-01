@@ -104,6 +104,30 @@ foreach ($directory in $payloadDirectories) {
     }
 }
 
+# --- Ensure the Source.Python runtime directory skeleton exists -----------
+# A clean git checkout does not track these runtime-writable directories
+# (they are git-ignored). Without them a first boot on a fresh install fails
+# before Python can bootstrap any files, so create the full skeleton in the
+# staged payload. The Python bootstrap also creates them defensively
+# (makedirs_p), so this additionally covers archive tools that do not restore
+# empty directory entries.
+$runtimeDirectories = @(
+    'cfg\source-python',
+    'cfg\source-python\auth',
+    'logs\source-python',
+    'addons\source-python\data',
+    'addons\source-python\data\custom',
+    'addons\source-python\data\plugins',
+    'addons\source-python\data\source-python\settings',
+    'addons\source-python\plugins',
+    'addons\source-python\packages\custom',
+    'resource\source-python\events',
+    'sound\source-python'
+)
+foreach ($runtimeDirectory in $runtimeDirectories) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage $runtimeDirectory) | Out-Null
+}
+
 # Rebuild bin/ and the loader from the native artifacts (do not trust stale
 # binaries copied out of the source tree).
 $binDirectory = Join-Path $stage 'addons\source-python\bin'

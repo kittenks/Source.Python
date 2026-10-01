@@ -162,3 +162,49 @@ the server reported it was hibernating (with no human player present), and
 multiple full rounds (plant/defuse, weapon purchases, kills) completed without a
 crash. Hibernation does not block bots from joining, so no hibernation cvar is
 needed; `sv_hibernate_when_empty` is a CS:GO command and does not exist in CS:S.
+
+### Team Fortress 2
+
+Measured on a real Team Fortress 2 Windows x86-64 dedicated server
+(`srcds_win64`, AppID 232250, build 10828683) with the test package:
+
+- Official bots use the `tf_bot_*` cvars (not the CS `bot_*` ones):
+  `tf_bot_quota 6`, `tf_bot_quota_mode fill`, `tf_bot_difficulty 1`, and
+  critically `tf_bot_join_after_player 0` (it defaults to `1`, which keeps bots
+  out of an otherwise empty server).
+- The hibernation cvar is `tf_allow_server_hibernation` (set it to `0` to keep
+  an empty server awake); TF2 has no `sv_hibernate_when_empty`. On TF2 the
+  hooked `CServerGameDLL::SetServerHibernation` resolves to vtable index 38
+  (`server.dll+0x2E69B0`), a ~29-byte thunk that is longer than the 14-byte
+  detour, so there is no short-function boundary problem. It was exercised for
+  real on the x86-64 server: with an empty server the engine logged
+  "Server is hibernating", the Source.Python pre-hook disconnected the bots and
+  the original function ran, and waking the server (re-adding bots) resumed
+  normal play with no crash across repeated hibernate/wake cycles.
+- Over a continuous 20+ minute run, six bots across several classes fought,
+  built and destroyed Engineer buildings, captured control points and played
+  through several round wins with zero crashes, zero Python tracebacks, zero
+  minidumps and flat memory (~485 MB, edicts ~319/2048).
+
+**Navigation meshes are not shipped for most official maps.** The TF2 dedicated
+depot (232250) does not include a `.nav` for maps such as
+`koth_harvest_final`; bots then join but stand still and never fight. Generate
+one once with `sv_cheats 1` followed by `nav_generate` (several minutes; it
+saves `<map>.nav` into `tf/maps/` and reloads the map automatically), or copy
+the `.nav` from a full game client. This is game-data setup, not a
+Source.Python defect.
+
+**Do not delete `addons/source-python/data/source-python/`.** The entity class
+definitions under `entities/` (together with `memory/`, `teams/`, `weapons/`
+and the rest) are static data shipped in every package, not generated at
+runtime. Removing that directory leaves virtual functions such as
+`Entity.get_solid_mask()` unregistered; the server keeps running because the
+collision manager catches the error, but every networked entity then logs
+`AttributeError: Attribute "get_solid_mask" not found` and the collision /
+solid-mask / ray-trace features silently stop working. The CI packages were
+verified to contain all of these files (188 entity-data entries for TF2). Only
+the writable runtime directories (`cfg/source-python`, `logs/source-python`,
+`data/source-python/settings`, `plugins`, ...) are created on demand at
+startup; the startup code creates them recursively, and the Windows x86-64
+package additionally seeds them as empty directory entries so a fresh extract
+boots with no manual creation.

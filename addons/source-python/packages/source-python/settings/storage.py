@@ -22,11 +22,10 @@ from paths import SP_DATA_PATH
 # Get the path to the user settings database file
 _STORAGE_PATH = SP_DATA_PATH / 'settings' / 'users.db'
 
-# Does the ../data/source-python/settings/ directory exist?
-if not _STORAGE_PATH.parent.is_dir():
-
-    # Create the ../data/source-python/settings/ directory
-    _STORAGE_PATH.parent.mkdir()
+# Recursively create the ../data/source-python/settings/ directory (and any
+# missing parents) so a clean installation can bootstrap itself. This is
+# idempotent and does not raise if the directory already exists.
+_STORAGE_PATH.parent.makedirs_p()
 
 
 # =============================================================================
