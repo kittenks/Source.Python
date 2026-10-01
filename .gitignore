@@ -57,3 +57,14 @@ addons/source-python/docs/plugins/
 
 # Linux temp files
 *~
+
+# Windows x86-64 local-only leftovers. On x86-64, DynamicHooks and HDE64 are
+# compiled from source directly into core (see
+# src/makefiles/win32/win32.base.cmake), so a locally produced win64
+# DynamicHooks static lib and scratch disassembly/log files must never be
+# committed. The vendored AsmJit/boost/dyncall archives under
+# src/thirdparty/<dep>/lib/win64 ARE tracked build inputs and are deliberately
+# NOT matched by these anchored rules.
+/src/thirdparty/DynamicHooks/lib/win64/
+/disasm_bridge.py
+/sp_console_calls.log
