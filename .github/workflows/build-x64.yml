@@ -77,6 +77,12 @@ jobs:
     env:
       SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
       SP_BRANCH: ${{ inputs.branch }}
+      # Disable the MSVC build-telemetry probe vctip.exe: on headless Windows
+      # runners it can inherit the MSBuild/cl output pipe and never exit,
+      # stalling the build until the job timeout (an orphan vctip process is
+      # then killed). It is pure usage telemetry with no codegen effect. This
+      # mirrors the thirdparty-tools Win64 CI fix.
+      VCTIPDISABLE: '1'
     steps:
       - name: Check out Source.Python
         uses: actions/checkout@v4
@@ -148,6 +154,12 @@ jobs:
     env:
       SP_GITHUB_PROXY: ${{ inputs.github_proxy }}
       SP_BRANCH: ${{ inputs.branch }}
+      # Disable the MSVC build-telemetry probe vctip.exe: on headless Windows
+      # runners it can inherit the MSBuild/cl output pipe and never exit,
+      # stalling the build until the job timeout (an orphan vctip process is
+      # then killed). It is pure usage telemetry with no codegen effect. This
+      # mirrors the thirdparty-tools Win64 CI fix.
+      VCTIPDISABLE: '1'
     steps:
       - name: Check out Source.Python
         uses: actions/checkout@v4
