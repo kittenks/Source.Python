@@ -262,3 +262,80 @@ leak. The single fault is therefore attributed to an engine-layer race in
 build 10889068 (map-entity / VScript command lifetime, or heap corruption
 triggered around the same time by vphysics warnings for dropped weapons flung
 far outside the map), not to the Source.Python x86-64 port.
+
+### Day of Defeat: Source
+
+Measured on a real Day of Defeat: Source Windows x86-64 dedicated server
+(`srcds_win64`, server AppID 232290, build 11003710/24 — the same engine
+build as Counter-Strike: Source) with the test package, with **Metamod:Source
+2.0.0-dev+1390 x86-64 and the third-party RCBot2 2.0-alpha8 x86-64 bot plugin
+loaded alongside Source.Python** (DODS ships no first-party bots). All three
+loaded together on the first launch; Source.Python reported "Loaded
+successfully" with no hibernation UserWarning and wrote no Python errors for
+the whole session. On `dod_donner` and `dod_kalt`, six bots split across
+Allies/Axis, picked classes (garand, M1 carbine, Thompson, MP40, MP44, K98),
+killed each other and captured control flags (`donner_center`, "Axis
+Street"). A continuous ~50 minute soak on `dod_kalt` held six active bots with
+flat memory (~237 MB) and edicts in 579-585/2048, 79 kills and 89
+capture/score events, one constant process (no watchdog respawn), zero
+minidumps and zero Python tracebacks.
+
+- **The hibernation hook is the HL2DM shape, not the CSS shape.** On DODS the
+  hooked `CServerGameDLL::SetServerHibernation` resolves to vtable index 38
+  (`server.dll+0x1AF2A0`): a 14-byte RIP-relative `FF 25` jump thunk
+  (`FF 25 00 00 00 00` followed by the 8-byte absolute target and `CC CC`),
+  the same form as HL2DM — neither the non-virtual four-byte CSS setter nor
+  the ~29-byte TF2 thunk. The detour installs silently with no UserWarning, so
+  DODS needs none of the CSS short-function special handling. Like CSS, this
+  build exposes **no hibernation cvar** (`find hibernate` is empty;
+  `sv_hibernate_when_empty` logs "Unknown command"). With bots present the
+  server never idled; after every bot was kicked it logged "Server is
+  hibernating" after ~105-130 s and froze, and an RCON `rcbotd addbot` woke it
+  immediately with the new bot active.
+- **RCBot2 console prefix and config timing.** This x86-64 build registers the
+  `rcbotd` command (`rcbotd addbot`, `rcbotd kickbot`, `rcbotd config ...`);
+  `rcbot2` is only the Metamod VDF alias and the upstream `rcbot config ...`
+  form is obsolete here, so both log "Unknown command". RCBot2 executes
+  `addons/rcbot2/config/config.ini` itself while the plugin is starting
+  (before `LevelInit`); the shipped file disables the quota with
+  `rcbot_bot_quota_interval -1`, sets `rcbot_loglevel 2` and uses the obsolete
+  `rcbot config min_bots/max_bots` lines. Enable the DOD block in
+  `config/bot_mods.ini` (mod/gamedir/bot/weaponlist = DOD/dod), set the
+  empty-server target in `config/bot_quota.ini` (`Humans "0" => Bots "6"`),
+  and in `config.ini` set `rcbot_bot_quota_interval 5`, `rcbot_loglevel 1` and
+  comment out the `rcbot config` lines. Setting `rcbot_*` cvars from the
+  engine `autoexec.cfg` does not work: `+exec autoexec` runs before
+  Metamod:Source registers the plugin's cvars, so they all log "Unknown
+  command".
+- **Empty-server cold-boot hibernation deadlock (and the fix).** On a cold
+  `+map` boot with no players the engine hibernates immediately after
+  `ServerActivate`, which freezes the per-frame quota think — so RCBot2 can
+  never add the first bot on its own and the server stays asleep. The fix is
+  configuration-only: give every shipped map a `cfg/<map>.cfg` that runs
+  `exec server.cfg` (the engine runs the per-map config after
+  `ServerActivate`, when the filesystem and the plugin cvars are ready), and
+  end `server.cfg` with `rcbot_bot_quota_interval 5` and a single
+  `rcbotd addbot` seed. The first one or two unassigned seed bots may be
+  dropped with "Punting bot, server is hibernating", but the add action breaks
+  the sleep; the server wakes and the quota then fills to the `bot_quota.ini`
+  target one bot every `rcbot_addbottime` seconds. After a `changelevel` the
+  server stays awake, so the same per-map config re-seeds and re-fills with no
+  punting. With this in place both a cold boot and every map change reached
+  six bots with no manual RCON.
+- **Missing `aux_data` is harmless.** The distributed `aux_data/dod/` folder
+  is empty, so RCBot2 logs `RCBot_CompressedLoad: can't open ... .rcd/.rcb`
+  and "Can't open Waypoint belief array" per map/bot. Those are optional
+  compressed-navigation and per-bot learning files; RCBot2 falls back to the
+  shipped `waypoints/dod/*.rcw` set (all nine official maps covered) and
+  navigates and fights normally. The non-fatal "failed to make folders for
+  profiles/*.ini" warning is likewise cosmetic.
+- **RCON `changelevel` needs the connection held open.** The engine queues
+  `changelevel`/`map` onto the main thread and only replies once the next map
+  is loading; a minimal RCON client that closes the TCP socket right after
+  sending can have the command dropped (ordinary queries are unaffected).
+  Keep the connection open until the level transition starts.
+
+**No Source.Python x86-64 defect was found on DODS.** The hibernation hook
+reuses the already-verified HL2DM/TF2 vtable[38] `FF 25`-thunk path, and every
+issue encountered was RCBot2/server configuration, resolved entirely in the
+server's cfg/config files with no Source.Python code change.
