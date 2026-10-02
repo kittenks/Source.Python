@@ -208,3 +208,57 @@ the writable runtime directories (`cfg/source-python`, `logs/source-python`,
 startup; the startup code creates them recursively, and the Windows x86-64
 package additionally seeds them as empty directory entries so a fresh extract
 boots with no manual creation.
+
+### Half-Life 2: Deathmatch
+
+Measured on a real Half-Life 2: Deathmatch Windows x86-64 dedicated server
+(`srcds_win64`, AppID 232370, build 10889068/24) with the test package, with
+**Metamod:Source 2.0.0-dev x86-64 and the third-party Botrix x86-64 bot plugin
+loaded alongside Source.Python** (HL2DM ships no first-party bots). All three
+loaded together on the first launch; bots navigated, fought and respawned, and
+edicts fell back cleanly after every map change (`dm_overwatch` ~295,
+`dm_lockdown` ~500 of 2048).
+
+- **The hibernation hook is a different shape again.** On HL2DM the hooked
+  `CServerGameDLL::SetServerHibernation` resolves to vtable index 38
+  (`server.dll+0x1ED150`), a 14-byte `FF 25` absolute-jump thunk — unlike the
+  non-virtual four-byte CSS setter and the ~29-byte vtable[38] thunk on TF2.
+  The detour installs silently with no UserWarning. This build exposes **no
+  hibernation cvar at all** (`sv_hibernate_when_empty` logs "Unknown command");
+  hibernation is driven purely by the engine call Source.Python hooks. With
+  bots present the server never idled; after every bot was kicked it froze
+  after ~105 s, and an RCON `botrix bot add` woke it immediately.
+- **Botrix has no quota and no auto-fill.** Add bots one at a time with
+  `botrix bot add` and clear them with `botrix bot kick all`; after a map
+  change or a hibernate/wake cycle the bots are gone and must be re-added.
+  Botrix reloads its waypoint file while the new map spawns, so for a few
+  seconds around a `changelevel` RCON can time out even though the process is
+  alive and listening — that is waypoint-load stall, not a crash.
+- **Botrix registers its cvars/commands once.** The x86-64 `botrix.dll`
+  imports no engine libraries directly (it resolves everything through
+  `CreateInterface`) and uses the Metamod:Source `CEmptyConVar` mechanism, so
+  its ConVars/ConCommands are registered at plugin load and are never
+  re-registered or unregistered during combat or map changes.
+
+**One low-probability native crash was investigated and cleared as not a
+Source.Python defect.** A single run crashed after ~24 minutes inside
+`vstdlib.dll!CCvar::UnregisterConCommand` (ICvar vtable index 7: the five
+`IAppSystem` slots, then AllocateDLLIdentifier=5 / Register=6 / Unregister=7)
+with 0xC0000005 at the function's first instruction `mov rax,[rdx]` — a
+use-after-free unregister of an already-freed `ConCommandBase*`. Source.Python
+cannot reach that path at runtime: Python `ConVar` objects use a never-delete
+deleter, and `CServerCommandManager` objects live for the whole session in
+`g_ServerCommandMap` (adding/removing Python callbacks never deletes or
+unregisters them; `ClearAllServerCommands()` runs only on an orderly core
+unload). A stress plugin that registered 8,000+ commands and then walked the
+growing `CCvar` list with `find` never corrupted the registry. The crash did
+not reproduce in either direction: **with** Source.Python, 91 minutes / 371
+kills / 6 bot-churn cycles / 8 map changes / the 8,000-command churn ran flat
+at ~200 MB with zero dumps; **without** Source.Python (Metamod:Source + Botrix
+only), 14 `dm_lockdown`<->`dm_overwatch` changes, four full kick-all ->
+hibernate -> wake/re-add cycles and 100+ bot create/destroy cycles over 37
+minutes likewise produced zero crashes, zero watchdog respawns and no edict
+leak. The single fault is therefore attributed to an engine-layer race in
+build 10889068 (map-entity / VScript command lifetime, or heap corruption
+triggered around the same time by vphysics warnings for dropped weapons flung
+far outside the map), not to the Source.Python x86-64 port.
