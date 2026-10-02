@@ -111,7 +111,12 @@ foreach ($directory in $payloadDirectories) {
 # staged payload. The Python bootstrap also creates them defensively
 # (makedirs_p), so this additionally covers archive tools that do not restore
 # empty directory entries.
-$runtimeDirectories = @(
+# NOTE: these variables must NOT be named $runtimeDirectory: PowerShell
+# variable names are case-insensitive, so a foreach variable called
+# $runtimeDirectory would silently clobber the -RuntimeDirectory parameter
+# (which points at the x86-64 Python runtime) and leave it set to the last
+# skeleton path, breaking the Python3/plat-win lookup below.
+$runtimeSkeletonDirectories = @(
     'cfg\source-python',
     'cfg\source-python\auth',
     'logs\source-python',
@@ -124,8 +129,8 @@ $runtimeDirectories = @(
     'resource\source-python\events',
     'sound\source-python'
 )
-foreach ($runtimeDirectory in $runtimeDirectories) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $stage $runtimeDirectory) | Out-Null
+foreach ($skeletonDirectory in $runtimeSkeletonDirectories) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $stage $skeletonDirectory) | Out-Null
 }
 
 # Rebuild bin/ and the loader from the native artifacts (do not trust stale
